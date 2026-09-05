@@ -1,7 +1,11 @@
 import os
-import random
 import time
 import sys
+
+# ============================================================
+# KRYPT DASHBOARD
+# Crypto Radar Core
+# ============================================================
 
 RESET = "\033[0m"
 
@@ -12,14 +16,20 @@ YELLOW = "\033[93m"
 RED = "\033[91m"
 WHITE = "\033[97m"
 
-COLORS = [CYAN, BLUE, GREEN, YELLOW, RED]
+# BUY için sıkı kriterler
+MAX_BUY_RISK = 20
+MIN_BUY_OPPORTUNITY = 75
+MIN_BUY_CONFIDENCE = 75
 
+# ============================================================
+# TERMINAL
+# ============================================================
 
 def clear():
     os.system("clear")
 
 
-def type_text(text, color=CYAN, speed=0.02):
+def type_text(text, color=CYAN, speed=0.015):
     for char in text:
         sys.stdout.write(color + char + RESET)
         sys.stdout.flush()
@@ -33,62 +43,50 @@ def progress_bar():
         percent = int((i / 30) * 100)
 
         sys.stdout.write(
-            "\r" + CYAN +
-            "KRYPT CORE [" + bar + f"] {percent}%" +
-            RESET
+            "\r"
+            + CYAN
+            + "KRYPT CORE ["
+            + bar
+            + f"] {percent}%"
+            + RESET
         )
 
         sys.stdout.flush()
-        time.sleep(0.04)
+        time.sleep(0.025)
 
     print()
 
 
-def scan_animation():
-    for i in range(4):
-        clear()
-
-        print(CYAN + "╔══════════════════════════════════════════════╗" + RESET)
-        print(CYAN + "║                                              ║" + RESET)
-        print(WHITE + "║              K R Y P T                       ║" + RESET)
-        print(CYAN + "║                                              ║" + RESET)
-        print(CYAN + "╚══════════════════════════════════════════════╝" + RESET)
-
-        print()
-        print(GREEN + "SYSTEM SCAN" + RESET)
-
-        line = " " * (i * 8) + "━━━━━━━━━━━━━━"
-        print(CYAN + line + RESET)
-
-        time.sleep(0.12)
-
+# ============================================================
+# BOOT ANIMATION
+# ============================================================
 
 def boot_animation():
     clear()
 
-    letters = ["K", "KR", "KRY", "KRYP", "KRYPT"]
+    letters = [
+        "K",
+        "KR",
+        "KRY",
+        "KRYP",
+        "KRYPT"
+    ]
 
     for text in letters:
         clear()
-
         print("\n\n")
         print(CYAN + "╔══════════════════════════════════════════════╗" + RESET)
         print(CYAN + "║                                              ║" + RESET)
         print(
-            WHITE +
-            "║              " +
-            text.center(14) +
-            "              ║" +
-            RESET
+            WHITE
+            + "║              "
+            + text.center(14)
+            + "              ║"
+            + RESET
         )
         print(CYAN + "║                                              ║" + RESET)
         print(CYAN + "╚══════════════════════════════════════════════╝" + RESET)
-
-        time.sleep(0.15)
-
-    time.sleep(0.4)
-
-    scan_animation()
+        time.sleep(0.12)
 
     clear()
 
@@ -103,8 +101,8 @@ def boot_animation():
 
     type_text(">> INITIALIZING KRYPT CORE...", CYAN)
     type_text(">> SECURITY MODULE ........ ONLINE", GREEN)
-    type_text(">> NETWORK INTERFACE ...... CONNECTED", BLUE)
-    type_text(">> CRYPTO ENGINE .......... READY", YELLOW)
+    type_text(">> MARKET ENGINE .......... READY", BLUE)
+    type_text(">> RISK ENGINE ............ READY", YELLOW)
 
     print()
 
@@ -112,76 +110,222 @@ def boot_animation():
 
     print()
 
-    type_text(">> ACCESS GRANTED", GREEN, 0.04)
-    type_text(">> KRYPT DASHBOARD ONLINE", WHITE, 0.04)
+    type_text(">> ACCESS GRANTED", GREEN)
+    type_text(">> KRYPT DASHBOARD ONLINE", WHITE)
 
-    time.sleep(1)
+    time.sleep(0.8)
 
+
+# ============================================================
+# ANALYSIS ENGINE
+# ============================================================
+
+def calculate_signal(risk, opportunity, confidence):
+    if (
+        risk <= MAX_BUY_RISK
+        and opportunity >= MIN_BUY_OPPORTUNITY
+        and confidence >= MIN_BUY_CONFIDENCE
+    ):
+        return "BUY", GREEN
+
+    return "RISK", RED
+
+
+def show_analysis_result(
+    coin,
+    risk,
+    opportunity,
+    confidence
+):
+    signal, signal_color = calculate_signal(
+        risk,
+        opportunity,
+        confidence
+    )
+
+    clear()
+
+    print(CYAN + "╔══════════════════════════════════════════════╗" + RESET)
+    print(WHITE + "║              KRYPT ANALYSIS                 ║" + RESET)
+    print(CYAN + "╠══════════════════════════════════════════════╣" + RESET)
+    print(f"║  COIN          : {coin:<27}║")
+    print(f"║  RISK          : {risk:>3}%                         ║")
+    print(f"║  OPPORTUNITY   : {opportunity:>3}/100                      ║")
+    print(f"║  CONFIDENCE    : {confidence:>3}%                         ║")
+    print(CYAN + "╠══════════════════════════════════════════════╣" + RESET)
+    print(signal_color + f"║  SIGNAL        : {signal:<27}║" + RESET)
+    print(CYAN + "╚══════════════════════════════════════════════╝" + RESET)
+
+    print()
+
+    if signal == "BUY":
+        print(GREEN + "LOW RISK + HIGH OPPORTUNITY" + RESET)
+    else:
+        print(RED + "RISK TOO HIGH OR CONDITIONS INSUFFICIENT" + RESET)
+
+    input("\nPress ENTER...")
+
+
+# ============================================================
+# CRYPTO RADAR
+# ============================================================
+
+def crypto_radar():
+    while True:
+        clear()
+
+        print(CYAN + "╔══════════════════════════════════════════════╗" + RESET)
+        print(WHITE + "║              CRYPTO RADAR                   ║" + RESET)
+        print(CYAN + "╠══════════════════════════════════════════════╣" + RESET)
+        print(CYAN + "║                                              ║" + RESET)
+        print(WHITE + "║  [01] MEMECOIN RADAR                        ║" + RESET)
+        print(WHITE + "║  [02] NEW COIN HUNTER                       ║" + RESET)
+        print(WHITE + "║  [03] LOW RISK TOP PICKS                    ║" + RESET)
+        print(WHITE + "║  [04] MARKET OVERVIEW                        ║" + RESET)
+        print(CYAN + "║                                              ║" + RESET)
+        print(CYAN + "║  [00] BACK                                   ║" + RESET)
+        print(CYAN + "║                                              ║" + RESET)
+        print(CYAN + "╚══════════════════════════════════════════════╝" + RESET)
+
+        choice = input(CYAN + "\nKRYPT://RADAR > " + RESET)
+
+        if choice == "1":
+            clear()
+            type_text(">> MEMECOIN RADAR", CYAN)
+            print()
+            print(YELLOW + "REAL MARKET DATA MODULE: WAITING" + RESET)
+            print()
+            print(WHITE + "The radar will scan:" + RESET)
+            print("• Liquidity")
+            print("• Volume")
+            print("• Momentum")
+            print("• Holder concentration")
+            print("• Contract security")
+            print("• Volatility")
+            print("• Market conditions")
+            input("\nPress ENTER...")
+
+        elif choice == "2":
+            clear()
+            type_text(">> NEW COIN HUNTER", BLUE)
+            print()
+            print(WHITE + "New token analysis will check:" + RESET)
+            print("• Token age")
+            print("• Liquidity")
+            print("• Volume")
+            print("• Holder growth")
+            print("• Whale concentration")
+            print("• Contract security")
+            print("• Momentum")
+            input("\nPress ENTER...")
+
+        elif choice == "3":
+            clear()
+            type_text(">> LOW RISK TOP PICKS", GREEN)
+            print()
+            print(WHITE + "BUY requires:" + RESET)
+            print(f"Risk <= {MAX_BUY_RISK}%")
+            print(f"Opportunity >= {MIN_BUY_OPPORTUNITY}/100")
+            print(f"Confidence >= {MIN_BUY_CONFIDENCE}%")
+            print()
+            print(YELLOW + "No coin is considered risk-free." + RESET)
+            input("\nPress ENTER...")
+
+        elif choice == "4":
+            clear()
+            type_text(">> MARKET OVERVIEW", CYAN)
+            print()
+            print(YELLOW + "LIVE MARKET DATA MODULE: WAITING" + RESET)
+            input("\nPress ENTER...")
+
+        elif choice == "00":
+            break
+
+
+# ============================================================
+# NOTES
+# ============================================================
+
+def notes():
+    clear()
+
+    print(YELLOW + "╔══════════════════════════════════════════════╗" + RESET)
+    print(YELLOW + "║                  NOTES                       ║" + RESET)
+    print(YELLOW + "╚══════════════════════════════════════════════╝" + RESET)
+
+    print()
+    print("Notes module coming soon.")
+
+    input("\nPress ENTER...")
+
+
+# ============================================================
+# SYSTEM
+# ============================================================
+
+def system_info():
+    clear()
+
+    print(GREEN + "╔══════════════════════════════════════════════╗" + RESET)
+    print(GREEN + "║                  SYSTEM                      ║" + RESET)
+    print(GREEN + "╚══════════════════════════════════════════════╝" + RESET)
+
+    print()
+    print("KRYPT CORE      : ONLINE")
+    print("RISK ENGINE     : ACTIVE")
+    print("MARKET ENGINE   : READY")
+    print("SECURITY        : ACTIVE")
+    print("AI ASSISTANT    : REMOVED")
+
+    input("\nPress ENTER...")
+
+
+# ============================================================
+# MAIN DASHBOARD
+# ============================================================
 
 def dashboard():
     clear()
 
-    color1 = random.choice(COLORS)
-    color2 = random.choice(COLORS)
+    print(CYAN + "╔══════════════════════════════════════════════╗" + RESET)
+    print(CYAN + "║                                              ║" + RESET)
+    print(WHITE + "║              K R Y P T                       ║" + RESET)
+    print(CYAN + "║          D A S H B O A R D                  ║" + RESET)
+    print(CYAN + "║                                              ║" + RESET)
+    print(CYAN + "╠══════════════════════════════════════════════╣" + RESET)
+    print(GREEN + "║  SYSTEM      ONLINE                          ║" + RESET)
+    print(GREEN + "║  SECURITY    ACTIVE                          ║" + RESET)
+    print(BLUE + "║  MARKET      READY                           ║" + RESET)
+    print(CYAN + "╠══════════════════════════════════════════════╣" + RESET)
+    print(WHITE + "║                                              ║" + RESET)
+    print(WHITE + "║  [01]  CRYPTO RADAR                          ║" + RESET)
+    print(WHITE + "║  [02]  NOTES                                 ║" + RESET)
+    print(WHITE + "║  [03]  SYSTEM                                ║" + RESET)
+    print(WHITE + "║                                              ║" + RESET)
+    print(RED + "║  [00]  EXIT                                  ║" + RESET)
+    print(CYAN + "║                                              ║" + RESET)
+    print(CYAN + "╚══════════════════════════════════════════════╝" + RESET)
 
-    print(color1 + "╔══════════════════════════════════════════════╗" + RESET)
-    print(color1 + "║                                              ║" + RESET)
-    print(color2 + "║              K R Y P T                       ║" + RESET)
-    print(color1 + "║          D A S H B O A R D                  ║" + RESET)
-    print(color1 + "║                                              ║" + RESET)
-    print(color1 + "╠══════════════════════════════════════════════╣" + RESET)
-    print(color2 + "║  SYSTEM      ONLINE                          ║" + RESET)
-    print(color2 + "║  SECURITY    ACTIVE                          ║" + RESET)
-    print(color2 + "║  TERMINAL    CONNECTED                       ║" + RESET)
-    print(color1 + "╠══════════════════════════════════════════════╣" + RESET)
-    print(color1 + "║                                              ║" + RESET)
-    print(color2 + "║  [01]  CRYPTO RADAR                          ║" + RESET)
-    print(color2 + "║  [02]  AI ASSISTANT                          ║" + RESET)
-    print(color2 + "║  [03]  NOTES                                 ║" + RESET)
-    print(color2 + "║  [04]  SYSTEM                                ║" + RESET)
-    print(color1 + "║                                              ║" + RESET)
-    print(color1 + "║  [00]  EXIT                                  ║" + RESET)
-    print(color1 + "║                                              ║" + RESET)
-    print(color1 + "╚══════════════════════════════════════════════╝" + RESET)
 
-    return color1
-
+# ============================================================
+# START
+# ============================================================
 
 boot_animation()
 
 while True:
+    dashboard()
 
-    color1 = dashboard()
-
-    choice = input(color1 + "\nKRYPT://ROOT > " + RESET)
+    choice = input(CYAN + "\nKRYPT://ROOT > " + RESET)
 
     if choice == "1":
-        clear()
-        print(CYAN + "\n╔════════════════════════════════════╗" + RESET)
-        print(CYAN + "║          CRYPTO RADAR             ║" + RESET)
-        print(CYAN + "╚════════════════════════════════════╝" + RESET)
-        input("\nPress ENTER...")
+        crypto_radar()
 
     elif choice == "2":
-        clear()
-        print(BLUE + "\n╔════════════════════════════════════╗" + RESET)
-        print(BLUE + "║          AI ASSISTANT             ║" + RESET)
-        print(BLUE + "╚════════════════════════════════════╝" + RESET)
-        input("\nPress ENTER...")
+        notes()
 
     elif choice == "3":
-        clear()
-        print(YELLOW + "\n╔════════════════════════════════════╗" + RESET)
-        print(YELLOW + "║              NOTES                 ║" + RESET)
-        print(YELLOW + "╚════════════════════════════════════╝" + RESET)
-        input("\nPress ENTER...")
-
-    elif choice == "4":
-        clear()
-        print(GREEN + "\n╔════════════════════════════════════╗" + RESET)
-        print(GREEN + "║             SYSTEM                ║" + RESET)
-        print(GREEN + "╚════════════════════════════════════╝" + RESET)
-        input("\nPress ENTER...")
+        system_info()
 
     elif choice == "00":
         clear()
