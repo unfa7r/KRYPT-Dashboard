@@ -1,22 +1,33 @@
-while True:
-    print("\n=== KRYPT DASHBOARD ===")
-    print("1 - Crypto")
-    print("2 - AI")
-    print("3 - Notes")
-    print("4 - System")
-    print("0 - Exit")
+import os
 
-    choice = input("\nKRYPT > ")
+os.system("clear")
+
+while True:
+    print("        KRYPT DASHBOARD")
+    print()
+    print("   [1] Crypto")
+    print("   [2] AI")
+    print("   [3] Notes")
+    print("   [4] System")
+    print()
+    print("   [0] Exit")
+    print()
+
+    choice = input("   KRYPT > ")
 
     if choice == "1":
-        print("Crypto")
+        print("\n   Crypto")
     elif choice == "2":
-        print("AI")
+        print("\n   AI")
     elif choice == "3":
-        print("Notes")
+        print("\n   Notes")
     elif choice == "4":
-        print("System")
+        print("\n   System")
     elif choice == "0":
+        os.system("clear")
         break
     else:
-        print("Invalid option.")
+        print("\n   Invalid option")
+
+    input("\n   Enter...")
+    os.system("clear")
