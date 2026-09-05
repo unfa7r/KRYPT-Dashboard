@@ -1,20 +1,124 @@
 import os
 import random
 import time
+import sys
 
 RESET = "\033[0m"
 
-COLORS = [
-    "\033[96m",
-    "\033[94m",
-    "\033[92m",
-    "\033[93m",
-    "\033[91m"
-]
+CYAN = "\033[96m"
+BLUE = "\033[94m"
+GREEN = "\033[92m"
+YELLOW = "\033[93m"
+RED = "\033[91m"
+WHITE = "\033[97m"
+
+COLORS = [CYAN, BLUE, GREEN, YELLOW, RED]
 
 
 def clear():
     os.system("clear")
+
+
+def type_text(text, color=CYAN, speed=0.02):
+    for char in text:
+        sys.stdout.write(color + char + RESET)
+        sys.stdout.flush()
+        time.sleep(speed)
+    print()
+
+
+def progress_bar():
+    for i in range(0, 31):
+        bar = "█" * i + "░" * (30 - i)
+        percent = int((i / 30) * 100)
+
+        sys.stdout.write(
+            "\r" + CYAN +
+            "KRYPT CORE [" + bar + f"] {percent}%" +
+            RESET
+        )
+
+        sys.stdout.flush()
+        time.sleep(0.04)
+
+    print()
+
+
+def scan_animation():
+    for i in range(4):
+        clear()
+
+        print(CYAN + "╔══════════════════════════════════════════════╗" + RESET)
+        print(CYAN + "║                                              ║" + RESET)
+        print(WHITE + "║              K R Y P T                       ║" + RESET)
+        print(CYAN + "║                                              ║" + RESET)
+        print(CYAN + "╚══════════════════════════════════════════════╝" + RESET)
+
+        print()
+
+        line = " " * (i * 8) + "━━━━━━━━━━━━━━"
+
+        print(GREEN + "SYSTEM SCAN" + RESET)
+        print(CYAN + line + RESET)
+
+        time.sleep(0.12)
+
+
+def boot_animation():
+    clear()
+
+    # KRYPT logo oluşumu
+    letters = ["K", "KR", "KRY", "KRYP", "KRYPT"]
+
+    for text in letters:
+        clear()
+
+        print("\n\n")
+        print(CYAN + "╔══════════════════════════════════════════════╗" + RESET)
+        print(CYAN + "║                                              ║" + RESET)
+        print(
+            WHITE +
+            "║              " +
+            text.center(14) +
+            "              ║" +
+            RESET
+        )
+        print(CYAN + "║                                              ║" + RESET)
+        print(CYAN + "╚══════════════════════════════════════════════╝" + RESET)
+
+        time.sleep(0.15)
+
+    time.sleep(0.4)
+
+    # Sistem taraması
+    scan_animation()
+
+    clear()
+
+    print(CYAN + "╔══════════════════════════════════════════════╗" + RESET)
+    print(CYAN + "║                                              ║" + RESET)
+    print(WHITE + "║              K R Y P T                       ║" + RESET)
+    print(CYAN + "║           C Y B E R  D A S H                ║" + RESET)
+    print(CYAN + "║                                              ║" + RESET)
+    print(CYAN + "╚══════════════════════════════════════════════╝" + RESET)
+
+    print()
+
+    type_text(">> INITIALIZING KRYPT CORE...", CYAN)
+    type_text(">> SECURITY MODULE ........ ONLINE", GREEN)
+    type_text(">> NETWORK INTERFACE ...... CONNECTED", BLUE)
+    type_text(">> CRYPTO ENGINE .......... READY", YELLOW)
+
+    print()
+
+    progress_bar()
+
+    print()
+
+    type_text(">> ACCESS GRANTED", GREEN, 0.04)
+    type_text(">> KRYPT SYSTEM ONLINE", WHITE, 0.04)
+
+    time.sleep(1)
 
 
 def dashboard():
@@ -46,6 +150,8 @@ def dashboard():
     return color1
 
 
+boot_animation()
+
 while True:
 
     color1 = dashboard()
@@ -54,31 +160,41 @@ while True:
 
     if choice == "1":
         clear()
-        print(random.choice(COLORS) + "\nCRYPTO RADAR" + RESET)
+        print(CYAN + "\n╔════════════════════════════════════╗" + RESET)
+        print(CYAN + "║          CRYPTO RADAR             ║" + RESET)
+        print(CYAN + "╚════════════════════════════════════╝" + RESET)
         input("\nPress ENTER...")
 
     elif choice == "2":
         clear()
-        print(random.choice(COLORS) + "\nAI ASSISTANT" + RESET)
+        print(BLUE + "\n╔════════════════════════════════════╗" + RESET)
+        print(BLUE + "║          AI ASSISTANT             ║" + RESET)
+        print(BLUE + "╚════════════════════════════════════╝" + RESET)
         input("\nPress ENTER...")
 
     elif choice == "3":
         clear()
-        print(random.choice(COLORS) + "\nNOTES" + RESET)
+        print(YELLOW + "\n╔════════════════════════════════════╗" + RESET)
+        print(YELLOW + "║              NOTES                 ║" + RESET)
+        print(YELLOW + "╚════════════════════════════════════╝" + RESET)
         input("\nPress ENTER...")
 
     elif choice == "4":
         clear()
-        print(random.choice(COLORS) + "\nSYSTEM" + RESET)
+        print(GREEN + "\n╔════════════════════════════════════╗" + RESET)
+        print(GREEN + "║             SYSTEM                ║" + RESET)
+        print(GREEN + "╚════════════════════════════════════╝" + RESET)
         input("\nPress ENTER...")
 
     elif choice == "00":
         clear()
-        print("\033[91mKRYPT SYSTEM OFFLINE\033[0m")
+        type_text(">> TERMINATING KRYPT CORE...", RED)
+        time.sleep(0.5)
+        print(RED + "\nKRYPT SYSTEM OFFLINE" + RESET)
         time.sleep(1)
         break
 
     else:
         clear()
-        print("\033[91mINVALID COMMAND\033[0m")
-        time.sleep(1)
+        type_text(">> INVALID COMMAND", RED)
+        time.sleep(0.8)
