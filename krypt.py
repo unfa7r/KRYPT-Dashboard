@@ -43,10 +43,12 @@ def dashboard():
     print(color1 + "║                                              ║" + RESET)
     print(color1 + "╚══════════════════════════════════════════════╝" + RESET)
 
+    return color1
+
 
 while True:
 
-    dashboard()
+    color1 = dashboard()
 
     choice = input(color1 + "\nKRYPT://ROOT > " + RESET)
 
