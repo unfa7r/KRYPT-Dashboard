@@ -28,7 +28,7 @@ def type_text(text, color=CYAN, speed=0.02):
 
 
 def progress_bar():
-    for i in range(0, 31):
+    for i in range(31):
         bar = "█" * i + "░" * (30 - i)
         percent = int((i / 30) * 100)
 
@@ -55,10 +55,9 @@ def scan_animation():
         print(CYAN + "╚══════════════════════════════════════════════╝" + RESET)
 
         print()
+        print(GREEN + "SYSTEM SCAN" + RESET)
 
         line = " " * (i * 8) + "━━━━━━━━━━━━━━"
-
-        print(GREEN + "SYSTEM SCAN" + RESET)
         print(CYAN + line + RESET)
 
         time.sleep(0.12)
@@ -67,7 +66,6 @@ def scan_animation():
 def boot_animation():
     clear()
 
-    # KRYPT logo oluşumu
     letters = ["K", "KR", "KRY", "KRYP", "KRYPT"]
 
     for text in letters:
@@ -90,7 +88,6 @@ def boot_animation():
 
     time.sleep(0.4)
 
-    # Sistem taraması
     scan_animation()
 
     clear()
@@ -98,7 +95,7 @@ def boot_animation():
     print(CYAN + "╔══════════════════════════════════════════════╗" + RESET)
     print(CYAN + "║                                              ║" + RESET)
     print(WHITE + "║              K R Y P T                       ║" + RESET)
-    print(CYAN + "║           C Y B E R  D A S H                ║" + RESET)
+    print(CYAN + "║          D A S H B O A R D                  ║" + RESET)
     print(CYAN + "║                                              ║" + RESET)
     print(CYAN + "╚══════════════════════════════════════════════╝" + RESET)
 
@@ -116,7 +113,7 @@ def boot_animation():
     print()
 
     type_text(">> ACCESS GRANTED", GREEN, 0.04)
-    type_text(">> KRYPT SYSTEM ONLINE", WHITE, 0.04)
+    type_text(">> KRYPT DASHBOARD ONLINE", WHITE, 0.04)
 
     time.sleep(1)
 
@@ -130,7 +127,7 @@ def dashboard():
     print(color1 + "╔══════════════════════════════════════════════╗" + RESET)
     print(color1 + "║                                              ║" + RESET)
     print(color2 + "║              K R Y P T                       ║" + RESET)
-    print(color1 + "║           C Y B E R  D A S H                ║" + RESET)
+    print(color1 + "║          D A S H B O A R D                  ║" + RESET)
     print(color1 + "║                                              ║" + RESET)
     print(color1 + "╠══════════════════════════════════════════════╣" + RESET)
     print(color2 + "║  SYSTEM      ONLINE                          ║" + RESET)
