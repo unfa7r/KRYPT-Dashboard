@@ -371,6 +371,18 @@ def analyze_holders(security):
         if not isinstance(holder, dict):
             continue
 
+        # ====================================================
+        # IMPORTANT GOPLUS FORMAT
+        #
+        # GoPlus returns:
+        #
+        # "percent": "0.7679"
+        #
+        # This already means 0.7679%.
+        #
+        # Therefore DO NOT multiply by 100.
+        # ====================================================
+
         percent = safe_float(
             holder.get("percent")
         )
@@ -378,11 +390,15 @@ def analyze_holders(security):
         if percent > 0:
             percentages.append(percent)
 
-        if str(
-            holder.get("is_locked")
-        ) == "1":
+        # GoPlus may return integer 0/1 or string "0"/"1".
+        locked = holder.get("is_locked")
 
-            locked_percent += percent * 100
+        if str(locked).lower() in (
+            "1",
+            "true"
+        ):
+
+            locked_percent += percent
 
     if not percentages:
 
@@ -402,12 +418,15 @@ def analyze_holders(security):
         reverse=True
     )
 
+    # IMPORTANT:
+    # percentages are already actual percentage values.
+
     result["top_holder_percent"] = (
-        percentages[0] * 100
+        percentages[0]
     )
 
     result["top10_percent"] = (
-        sum(percentages[:10]) * 100
+        sum(percentages[:10])
     )
 
     result["locked_percent"] = (
@@ -426,7 +445,7 @@ def analyze_holders(security):
         result["risk"] += 20
 
         result["reasons"].append(
-            f"Extreme top-holder concentration ({top:.1f}%)"
+            f"Extreme top-holder concentration ({top:.2f}%)"
         )
 
     elif top >= 25:
@@ -434,7 +453,7 @@ def analyze_holders(security):
         result["risk"] += 12
 
         result["reasons"].append(
-            f"High top-holder concentration ({top:.1f}%)"
+            f"High top-holder concentration ({top:.2f}%)"
         )
 
     elif top >= 15:
@@ -442,7 +461,7 @@ def analyze_holders(security):
         result["risk"] += 6
 
         result["reasons"].append(
-            f"Moderate top-holder concentration ({top:.1f}%)"
+            f"Moderate top-holder concentration ({top:.2f}%)"
         )
 
     # --------------------------------------------------------
@@ -454,7 +473,7 @@ def analyze_holders(security):
         result["risk"] += 15
 
         result["reasons"].append(
-            f"Top 10 control {top10:.1f}%"
+            f"Top 10 control {top10:.2f}%"
         )
 
     elif top10 >= 65:
@@ -462,7 +481,7 @@ def analyze_holders(security):
         result["risk"] += 10
 
         result["reasons"].append(
-            f"Top 10 control {top10:.1f}%"
+            f"Top 10 control {top10:.2f}%"
         )
 
     elif top10 >= 50:
@@ -470,7 +489,7 @@ def analyze_holders(security):
         result["risk"] += 5
 
         result["reasons"].append(
-            f"Top 10 control {top10:.1f}%"
+            f"Top 10 control {top10:.2f}%"
         )
 
     # --------------------------------------------------------
@@ -480,7 +499,7 @@ def analyze_holders(security):
     if locked_percent >= 30:
 
         result["reasons"].append(
-            f"{locked_percent:.1f}% of top holders locked"
+            f"{locked_percent:.2f}% of top holders locked"
         )
 
     # --------------------------------------------------------
@@ -683,8 +702,6 @@ def calculate_analysis(pair, security):
 
     risk_reasons = []
 
-    # Liquidity
-
     if liquidity < 5000:
 
         risk += 15
@@ -700,8 +717,6 @@ def calculate_analysis(pair, security):
         risk_reasons.append(
             "Low liquidity"
         )
-
-    # Volume
 
     if volume < 1000:
 
@@ -719,8 +734,6 @@ def calculate_analysis(pair, security):
             "Low volume"
         )
 
-    # Short-term dump
-
     if price_change_5m <= -20:
 
         risk += 15
@@ -736,8 +749,6 @@ def calculate_analysis(pair, security):
         risk_reasons.append(
             "Short-term weakness"
         )
-
-    # Extreme pump
 
     if price_change_1h >= 200:
 
@@ -755,8 +766,6 @@ def calculate_analysis(pair, security):
             "Strong 1h pump"
         )
 
-    # Sell pressure
-
     if (
         total_5m > 0
         and buy_ratio_5m < 0.40
@@ -767,8 +776,6 @@ def calculate_analysis(pair, security):
         risk_reasons.append(
             "Sell pressure"
         )
-
-    # Token age
 
     if (
         age_hours > 0
@@ -792,7 +799,9 @@ def calculate_analysis(pair, security):
             "Very new token"
         )
 
-    # Whale risk
+    # --------------------------------------------------------
+    # WHALE
+    # --------------------------------------------------------
 
     risk += whale["risk"]
 
@@ -804,7 +813,9 @@ def calculate_analysis(pair, security):
                 f"Whale: {reason}"
             )
 
-    # Security risk
+    # --------------------------------------------------------
+    # SECURITY
+    # --------------------------------------------------------
 
     if security_result["available"]:
 
@@ -826,6 +837,11 @@ def calculate_analysis(pair, security):
             "Security data unavailable"
         )
 
+    risk = min(
+        risk,
+        100
+    )
+
     # ========================================================
     # OPPORTUNITY
     # ========================================================
@@ -833,8 +849,6 @@ def calculate_analysis(pair, security):
     opportunity = 0
 
     opportunity_reasons = []
-
-    # Liquidity
 
     if liquidity >= 100_000:
 
@@ -860,8 +874,6 @@ def calculate_analysis(pair, security):
             "Acceptable liquidity"
         )
 
-    # Volume
-
     if volume >= 1_000_000:
 
         opportunity += 20
@@ -886,8 +898,6 @@ def calculate_analysis(pair, security):
             "Healthy volume"
         )
 
-    # 1h momentum
-
     if 10 <= price_change_1h <= 100:
 
         opportunity += 15
@@ -904,8 +914,6 @@ def calculate_analysis(pair, security):
             "Positive 1h momentum"
         )
 
-    # 5m momentum
-
     if price_change_5m > 0:
 
         opportunity += 8
@@ -913,8 +921,6 @@ def calculate_analysis(pair, security):
         opportunity_reasons.append(
             "Positive 5m momentum"
         )
-
-    # Buy pressure
 
     if buy_ratio_5m >= 0.60:
 
@@ -932,8 +938,6 @@ def calculate_analysis(pair, security):
             "Buy pressure positive"
         )
 
-    # Activity
-
     if total_5m >= 100:
 
         opportunity += 8
@@ -950,8 +954,6 @@ def calculate_analysis(pair, security):
             "Good recent activity"
         )
 
-    # Early stage
-
     if 1 <= age_hours <= 48:
 
         opportunity += 8
@@ -960,8 +962,6 @@ def calculate_analysis(pair, security):
             "Early-stage opportunity"
         )
 
-    # Security
-
     if security_result["safe"]:
 
         opportunity += 6
@@ -969,8 +969,6 @@ def calculate_analysis(pair, security):
         opportunity_reasons.append(
             "Security checks passed"
         )
-
-    # Whale
 
     if whale["available"]:
 
@@ -2012,10 +2010,10 @@ def show_results(results):
             whale_info = (
 
                 f"Top: "
-                f"{whale['top_holder_percent']:.1f}%   "
+                f"{whale['top_holder_percent']:.2f}%   "
 
                 f"Top10: "
-                f"{whale['top10_percent']:.1f}%   "
+                f"{whale['top10_percent']:.2f}%   "
 
                 f"Whale Risk: "
                 f"{whale['risk']}"
