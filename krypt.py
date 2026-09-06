@@ -1575,6 +1575,101 @@ def calculate_analysis(pair, security):
 # SCANNER
 # ============================================================
 
+def scan_memory_tokens():
+
+    clear()
+
+    print(f"{CYAN}{BOLD}")
+    print(
+        "╔══════════════════════════════════════════════════════════════╗"
+    )
+    print(
+        "║                 KRYPT LOW RISK TOP PICKS                    ║"
+    )
+    print(
+        "╚══════════════════════════════════════════════════════════════╝"
+    )
+    print(RESET)
+
+    memory = load_radar_memory()
+
+    if not memory:
+        print(
+            f"{RED}[ERROR] Radar memory is empty.{RESET}"
+        )
+        return []
+
+    results = []
+
+    print(
+        f"{CYAN}[RADAR] Checking saved BUY candidates... "
+        f"{len(memory)}{RESET}"
+    )
+
+    line()
+
+    for index, saved in enumerate(memory, 1):
+
+        chain = saved.get("chainId")
+        address = saved.get("tokenAddress")
+
+        if not chain or not address:
+            continue
+
+        pairs = get_token_pairs(
+            chain,
+            address
+        )
+
+        pair = choose_best_pair(
+            pairs
+        )
+
+        if not pair:
+            continue
+
+        print(
+            f"{GRAY}[{index:02d}/{len(memory)}] "
+            f"Live security + whale scan...{RESET}"
+        )
+
+        security = get_token_security(
+            chain,
+            address
+        )
+
+        analysis = calculate_analysis(
+            pair,
+            security
+        )
+
+        base_token = pair.get("baseToken") or {}
+
+        symbol = base_token.get("symbol") or "UNKNOWN"
+        name = base_token.get("name") or "UNKNOWN"
+
+        results.append({
+            "symbol": symbol,
+            "name": name,
+            "chain": chain,
+            "address": address,
+            "pair": pair,
+            "analysis": analysis
+        })
+
+    results.sort(
+        key=lambda x: (
+            x["analysis"]["risk"] <= MAX_BUY_RISK,
+            x["analysis"]["opportunity"],
+            x["analysis"]["confidence"],
+            x["analysis"]["krypt_score"]
+        ),
+        reverse=True
+    )
+
+    return results
+
+
 def scan_new_tokens():
 
     clear()
@@ -2566,35 +2661,10 @@ def crypto_radar():
 
         elif choice in ("02", "2"):
 
-            results = scan_new_tokens()
-
-            low_risk = [
-
-                item
-
-                for item in results
-
-                if item["analysis"]["risk"]
-                <= MAX_BUY_RISK
-
-            ]
-
-            low_risk.sort(
-
-                key=lambda x: (
-
-                    x["analysis"]["opportunity"],
-
-                    x["analysis"]["confidence"]
-
-                ),
-
-                reverse=True
-
-            )
+            results = scan_memory_tokens()
 
             show_results(
-                low_risk
+                results
             )
 
         elif choice in ("03", "3"):
