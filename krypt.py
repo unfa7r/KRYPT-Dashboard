@@ -71,6 +71,7 @@ SESSION.headers.update({
 # ============================================================
 
 RADAR_MEMORY_FILE = "krypt_radar_memory.json"
+NOTES_FILE = "krypt_notes.json"
 MAX_MEMORY_TOKENS = 20
 
 
@@ -319,6 +320,231 @@ def boot_animation():
     )
 
     time.sleep(0.5)
+
+
+# ============================================================
+# NOTES STORAGE
+# ============================================================
+
+def load_notes():
+
+    try:
+
+        if not os.path.exists(
+            NOTES_FILE
+        ):
+            return []
+
+        with open(
+            NOTES_FILE,
+            "r",
+            encoding="utf-8"
+        ) as file:
+
+            data = json.load(file)
+
+        return data if isinstance(data, list) else []
+
+    except Exception:
+        return []
+
+
+def save_notes(notes):
+
+    try:
+
+        with open(
+            NOTES_FILE,
+            "w",
+            encoding="utf-8"
+        ) as file:
+
+            json.dump(
+                notes,
+                file,
+                indent=2,
+                ensure_ascii=False
+            )
+
+        return True
+
+    except Exception:
+        return False
+
+
+def add_note():
+
+    clear()
+
+    print(
+        f"{CYAN}{BOLD}"
+        "NEW NOTE"
+        f"{RESET}"
+    )
+
+    line()
+
+    note = input(
+        f"{WHITE}Write note: {RESET}"
+    ).strip()
+
+    if not note:
+
+        print(
+            f"{RED}Note cannot be empty.{RESET}"
+        )
+
+        pause()
+
+        return
+
+    notes = load_notes()
+
+    notes.append({
+        "text": note,
+        "created": datetime.now().strftime(
+            "%Y-%m-%d %H:%M"
+        )
+    })
+
+    if save_notes(notes):
+
+        print(
+            f"{GREEN}Note saved successfully.{RESET}"
+        )
+
+    else:
+
+        print(
+            f"{RED}Could not save note.{RESET}"
+        )
+
+    pause()
+
+
+def view_notes():
+
+    clear()
+
+    print(
+        f"{CYAN}{BOLD}"
+        "YOUR NOTES"
+        f"{RESET}"
+    )
+
+    line()
+
+    notes = load_notes()
+
+    if not notes:
+
+        print(
+            f"{GRAY}No notes found.{RESET}"
+        )
+
+        pause()
+
+        return
+
+    for index, note in enumerate(
+        notes,
+        1
+    ):
+
+        print(
+            f"{CYAN}[{index:02d}]{RESET} "
+            f"{WHITE}{note.get('text', '')}{RESET}"
+        )
+
+        print(
+            f"{GRAY}"
+            f"     {note.get('created', '')}"
+            f"{RESET}"
+        )
+
+        print()
+
+    pause()
+
+
+def delete_note():
+
+    clear()
+
+    print(
+        f"{CYAN}{BOLD}"
+        "DELETE NOTE"
+        f"{RESET}"
+    )
+
+    line()
+
+    notes = load_notes()
+
+    if not notes:
+
+        print(
+            f"{GRAY}No notes to delete.{RESET}"
+        )
+
+        pause()
+
+        return
+
+    for index, note in enumerate(
+        notes,
+        1
+    ):
+
+        print(
+            f"{CYAN}[{index:02d}]{RESET} "
+            f"{note.get('text', '')}"
+        )
+
+    print()
+
+    choice = input(
+        f"{WHITE}Select note number (0 cancel): {RESET}"
+    ).strip()
+
+    if choice == "0":
+
+        return
+
+    try:
+
+        index = int(choice) - 1
+
+        if index < 0 or index >= len(notes):
+            raise ValueError
+
+    except ValueError:
+
+        print(
+            f"{RED}Invalid selection.{RESET}"
+        )
+
+        pause()
+
+        return
+
+    deleted = notes.pop(index)
+
+    if save_notes(notes):
+
+        print(
+            f"{GREEN}"
+            f"Deleted: {deleted.get('text', '')}"
+            f"{RESET}"
+        )
+
+    else:
+
+        print(
+            f"{RED}Could not update notes.{RESET}"
+        )
+
+    pause()
 
 
 # ============================================================
@@ -2786,23 +3012,65 @@ def crypto_radar():
 
 def notes():
 
-    clear()
+    while True:
 
-    print(
-        f"{CYAN}{BOLD}"
-        "NOTES"
-        f"{RESET}"
-    )
+        clear()
 
-    line()
+        print(
+            f"{CYAN}{BOLD}"
+            "NOTES"
+            f"{RESET}"
+        )
 
-    print(
-        f"{GRAY}"
-        "Notes module will be expanded later."
-        f"{RESET}"
-    )
+        line()
 
-    pause()
+        print(
+            f"{WHITE}[01]{RESET} NEW NOTE"
+        )
+
+        print(
+            f"{WHITE}[02]{RESET} VIEW NOTES"
+        )
+
+        print(
+            f"{WHITE}[03]{RESET} DELETE NOTE"
+        )
+
+        print()
+
+        print(
+            f"{GRAY}[00] BACK{RESET}"
+        )
+
+        line()
+
+        choice = input(
+            f"{WHITE}Selection: {RESET}"
+        ).strip()
+
+        if choice in ("01", "1"):
+
+            add_note()
+
+        elif choice in ("02", "2"):
+
+            view_notes()
+
+        elif choice in ("03", "3"):
+
+            delete_note()
+
+        elif choice in ("00", "0"):
+
+            return
+
+        else:
+
+            print(
+                f"{RED}Invalid selection.{RESET}"
+            )
+
+            time.sleep(1)
 
 
 # ============================================================

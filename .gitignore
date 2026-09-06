@@ -3,3 +3,5 @@ __pycache__/
 krypt_backup.py
 .venv/
 krypt_radar_memory.json
+
+krypt_notes.json
