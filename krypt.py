@@ -676,8 +676,6 @@ def get_latest_profiles():
         # Search is used only to discover additional candidates;
         # existing BUY / RISK logic remains unchanged.
         search_terms = [
-            "sol",
-            "usdc",
             "pump",
             "ai",
             "cat",
@@ -1561,6 +1559,353 @@ def calculate_position_status(
     }
 
 
+def calculate_grow_score(
+    liquidity,
+    volume,
+    volume_5m,
+    price_change_5m,
+    price_change_1h,
+    price_change_24h,
+    buy_ratio_5m,
+    buy_ratio_1h,
+    total_5m,
+    total_1h,
+    age_hours,
+    whale,
+    security_result
+):
+
+    score = 0
+
+    # LIQUIDITY
+    if liquidity >= 100_000:
+        score += 15
+    elif liquidity >= 50_000:
+        score += 12
+    elif liquidity >= MIN_LIQUIDITY:
+        score += 8
+
+    # VOLUME
+    if volume >= 1_000_000:
+        score += 15
+    elif volume >= 100_000:
+        score += 12
+    elif volume >= MIN_VOLUME:
+        score += 7
+
+    # MOMENTUM
+    if 5 <= price_change_1h <= 100:
+        score += 12
+    elif 0 < price_change_1h < 5:
+        score += 7
+
+    if 2 <= price_change_5m <= 20:
+        score += 8
+    elif price_change_5m > 0:
+        score += 4
+
+    if 10 <= price_change_24h <= 300:
+        score += 8
+    elif 0 < price_change_24h < 10:
+        score += 4
+
+    # BUY PRESSURE
+    if buy_ratio_5m >= 0.60:
+        score += 8
+    elif buy_ratio_5m >= 0.52:
+        score += 4
+
+    if buy_ratio_1h >= 0.55:
+        score += 6
+    elif buy_ratio_1h >= 0.50:
+        score += 3
+
+    # ACTIVITY
+    if total_5m >= 100:
+        score += 6
+    elif total_5m >= 30:
+        score += 3
+
+    if total_1h >= 500:
+        score += 5
+    elif total_1h >= 100:
+        score += 3
+
+    # TOKEN AGE
+    if 1 <= age_hours <= 48:
+        score += 5
+    elif 48 < age_hours <= 168:
+        score += 2
+
+    # SECURITY
+    if security_result.get("available"):
+        if security_result.get("safe"):
+            score += 5
+        else:
+            score -= 15
+    else:
+        score -= 10
+
+    # WHALE
+    if whale.get("available"):
+        if whale.get("risk", 100) < 20:
+            score += 5
+        elif whale.get("risk", 100) >= 50:
+            score -= 10
+    else:
+        score -= 10
+
+    return max(0, min(round(score), 100))
+
+
+def calculate_grow_forecast(
+    grow_score,
+    price_change_5m,
+    price_change_1h,
+    price_change_24h,
+    volume,
+    liquidity,
+    buy_ratio_5m,
+    buy_ratio_1h,
+    age_hours
+):
+
+    # ========================================================
+    # GROW FORECAST ENGINE V3
+    # ========================================================
+
+    if grow_score < 40:
+        return None
+
+    momentum = (
+        price_change_5m * 0.20
+        + price_change_1h * 0.35
+        + price_change_24h * 0.45
+    )
+
+    flow = (
+        buy_ratio_5m * 0.55
+        + buy_ratio_1h * 0.45
+    )
+
+    activity = 0
+
+    if volume >= 10_000_000:
+        activity += 20
+    elif volume >= 1_000_000:
+        activity += 15
+    elif volume >= 100_000:
+        activity += 10
+    elif volume >= MIN_VOLUME:
+        activity += 5
+
+    if liquidity >= 500_000:
+        activity += 20
+    elif liquidity >= 100_000:
+        activity += 15
+    elif liquidity >= 50_000:
+        activity += 10
+    elif liquidity >= MIN_LIQUIDITY:
+        activity += 5
+
+    momentum_factor = max(
+        -1.0,
+        min(momentum / 100.0, 3.0)
+    )
+
+    flow_factor = max(
+        0.0,
+        min((flow - 0.50) * 4.0, 1.0)
+    )
+
+    strength = (
+        grow_score * 0.60
+        + activity * 0.20
+        + flow_factor * 20
+        + momentum_factor * 20
+    )
+
+    strength = max(
+        0,
+        min(strength, 100)
+    ) / 100.0
+
+    # ========================================================
+    # GROWTH PRESSURE
+    # ========================================================
+
+    growth_pressure = 0
+    # DOWNSIDE PRESSURE
+    if price_change_1h <= -50:
+        growth_pressure -= 30
+    elif price_change_1h <= -30:
+        growth_pressure -= 20
+    elif price_change_1h <= -20:
+        growth_pressure -= 12
+    elif price_change_1h <= -10:
+        growth_pressure -= 6
+
+    if price_change_5m <= -10:
+        growth_pressure -= 8
+    elif price_change_5m <= -5:
+        growth_pressure -= 4
+
+    if grow_score >= 90:
+        growth_pressure += 25
+    elif grow_score >= 80:
+        growth_pressure += 18
+    elif grow_score >= 70:
+        growth_pressure += 10
+
+    if price_change_1h >= 150:
+        growth_pressure += 25
+    elif price_change_1h >= 100:
+        growth_pressure += 18
+    elif price_change_1h >= 50:
+        growth_pressure += 12
+    elif price_change_1h >= 25:
+        growth_pressure += 6
+
+    if price_change_5m >= 30:
+        growth_pressure += 20
+    elif price_change_5m >= 20:
+        growth_pressure += 15
+    elif price_change_5m >= 10:
+        growth_pressure += 10
+    elif price_change_5m >= 5:
+        growth_pressure += 5
+
+    if price_change_24h >= 500:
+        growth_pressure += 20
+    elif price_change_24h >= 300:
+        growth_pressure += 15
+    elif price_change_24h >= 100:
+        growth_pressure += 10
+    elif price_change_24h >= 50:
+        growth_pressure += 5
+
+    if volume >= 10_000_000:
+        growth_pressure += 15
+    elif volume >= 1_000_000:
+        growth_pressure += 10
+
+    if liquidity >= 500_000:
+        growth_pressure += 15
+    elif liquidity >= 100_000:
+        growth_pressure += 8
+
+    if buy_ratio_5m >= 0.70:
+        growth_pressure += 15
+    elif buy_ratio_5m >= 0.65:
+        growth_pressure += 10
+    elif buy_ratio_5m >= 0.60:
+        growth_pressure += 6
+
+    if buy_ratio_1h >= 0.65:
+        growth_pressure += 15
+    elif buy_ratio_1h >= 0.60:
+        growth_pressure += 10
+    elif buy_ratio_1h >= 0.55:
+        growth_pressure += 6
+
+    growth_pressure = min(
+        growth_pressure,
+        150
+    )
+
+    # ========================================================
+    # EXTREME MULTIPLIER
+    # ========================================================
+
+    if growth_pressure >= 100:
+
+        extreme_multiplier = (
+            2.0
+            + ((growth_pressure - 100) / 50.0) * 8.0
+        )
+
+    elif growth_pressure >= 75:
+
+        extreme_multiplier = (
+            1.25
+            + ((growth_pressure - 75) / 25.0) * 0.75
+        )
+
+    elif growth_pressure >= 50:
+
+        extreme_multiplier = (
+            1.0
+            + ((growth_pressure - 50) / 25.0) * 0.25
+        )
+
+    else:
+
+        extreme_multiplier = 1.0
+
+    confidence_base = max(
+        20,
+        min(
+            round(
+                grow_score * 0.55
+                + activity * 0.20
+                + flow_factor * 25
+            ),
+            95
+        )
+    )
+
+    # ========================================================
+    # HORIZONS
+    # ========================================================
+
+    horizons = {
+        "1H": (0.08, 0.25),
+        "6H": (0.20, 0.70),
+        "1D": (0.40, 1.50),
+        "1W": (1.00, 6.00),
+        "1M": (2.00, 10.00)
+    }
+
+    forecasts = {}
+
+    for horizon, (low_factor, high_factor) in horizons.items():
+
+        low = (
+            low_factor
+            * strength
+            * 100
+        )
+
+        high = (
+            high_factor
+            * strength
+            * 100
+            * extreme_multiplier
+        )
+
+        confidence = confidence_base
+
+        if horizon in ("1W", "1M"):
+            confidence = max(
+                15,
+                confidence - 20
+            )
+
+        if age_hours < 1:
+            confidence = max(
+                10,
+                confidence - 15
+            )
+
+        forecasts[horizon] = {
+            "low": round(low, 2),
+            "high": round(high, 2),
+            "confidence": confidence
+        }
+
+    return forecasts
+
+
 def calculate_analysis(pair, security):
 
     liquidity = safe_float(
@@ -2003,6 +2348,34 @@ def calculate_analysis(pair, security):
         )
     )
 
+    grow_score = calculate_grow_score(
+        liquidity,
+        volume,
+        volume_5m,
+        price_change_5m,
+        price_change_1h,
+        price_change_24h,
+        buy_ratio_5m,
+        buy_ratio_1h,
+        total_5m,
+        total_1h,
+        age_hours,
+        whale,
+        security_result
+    )
+
+    grow_forecast = calculate_grow_forecast(
+        grow_score,
+        price_change_5m,
+        price_change_1h,
+        price_change_24h,
+        volume,
+        liquidity,
+        buy_ratio_5m,
+        buy_ratio_1h,
+        age_hours
+    )
+
     # ========================================================
     # CRITICAL BUY GATE
     # ========================================================
@@ -2073,6 +2446,8 @@ def calculate_analysis(pair, security):
             1
         ),
 
+        "grow_score": grow_score,
+        "grow_forecast": grow_forecast,
         "signal": signal,
 
         "whale_risk": whale["risk"],
@@ -3019,7 +3394,10 @@ def show_results(results):
             f"{analysis['opportunity']:>3}/100   "
 
             f"Confidence: "
-            f"{analysis['confidence']:>3}%"
+            f"{analysis['confidence']:>3}%   "
+
+            f"Grow Score: "
+            f"{analysis['grow_score']:>3}/100"
 
         )
 
@@ -3045,6 +3423,36 @@ def show_results(results):
             f"{format_age(analysis['age_hours'])}"
 
         )
+
+        forecast = analysis.get("grow_forecast")
+
+        if forecast:
+
+            print(
+                f"    {YELLOW}GROW FORECAST{RESET}"
+            )
+
+            for horizon in ("1H", "6H", "1D", "1W", "1M"):
+
+                data = forecast.get(horizon)
+
+                if not data:
+                    continue
+
+                print(
+                    f"    {horizon:<3}: "
+                    f"{data['low']:+.1f}% → "
+                    f"{data['high']:+.1f}%   "
+                    f"C: {data['confidence']}%"
+                )
+
+        else:
+
+            print(
+                f"    {GRAY}"
+                "GROW FORECAST: DATA INSUFFICIENT"
+                f"{RESET}"
+            )
 
         whale = analysis["whale"]
 
@@ -3495,7 +3903,7 @@ def my_positions():
             buy_position()
 
         elif choice in ("02", "2"):
-            view_positions()
+            live_positions()
 
         elif choice in ("03", "3"):
             sell_position()
@@ -3603,12 +4011,12 @@ def view_positions():
 
     clear()
 
-    print(f"{CYAN}{BOLD}MY POSITIONS{RESET}")
+    print(f"{CYAN}{BOLD}MY POSITIONS  •  LIVE{RESET}" + " " * 38 + "Exit: Ctrl+C")
     line()
 
     if not positions:
         print(f"{GRAY}No open positions.{RESET}")
-        pause()
+        return
         return
 
     total_invested = 0.0
@@ -3792,7 +4200,18 @@ def view_positions():
         f"{RESET}"
     )
 
-    pause()
+
+
+def live_positions():
+    try:
+        while True:
+            clear()
+            view_positions()
+            time.sleep(15)
+    except KeyboardInterrupt:
+        clear()
+        print(f"{GRAY}Live positions closed.{RESET}")
+        time.sleep(1)
 
 
 def sell_position():
