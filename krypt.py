@@ -264,13 +264,6 @@ def get_token_age_hours(pair):
 # ============================================================
 
 def analyze_holders(security):
-    """
-    Analyze GoPlus top-10 holder data.
-
-    Percent values from GoPlus are represented as:
-    1.0 = 100%
-    0.10 = 10%
-    """
 
     result = {
         "available": False,
@@ -342,10 +335,6 @@ def analyze_holders(security):
 
     result["locked_percent"] = locked_percent
 
-    # --------------------------------------------------------
-    # WHALE RISK
-    # --------------------------------------------------------
-
     top = result["top_holder_percent"]
     top10 = result["top10_percent"]
 
@@ -399,6 +388,234 @@ def analyze_holders(security):
 
 
 # ============================================================
+# WHALE ENGINE TEST
+# ============================================================
+
+def whale_test():
+
+    clear()
+
+    print(f"{CYAN}{BOLD}")
+    print("╔══════════════════════════════════════════════════════════════╗")
+    print("║                     WHALE ENGINE TEST                       ║")
+    print("╚══════════════════════════════════════════════════════════════╝")
+    print(RESET)
+
+    print(
+        f"{GRAY}[WHALE] Searching live Solana tokens...{RESET}"
+    )
+
+    profiles = get_latest_profiles()
+
+    if not profiles:
+        print(
+            f"{RED}[ERROR] Could not retrieve token profiles.{RESET}"
+        )
+        pause()
+        return
+
+    checked = 0
+
+    for profile in profiles:
+
+        chain = profile.get("chainId")
+        address = profile.get("tokenAddress")
+
+        if not chain or not address:
+            continue
+
+        if chain.lower() != "solana":
+            continue
+
+        pairs = get_token_pairs(
+            chain,
+            address
+        )
+
+        pair = choose_best_pair(pairs)
+
+        if not pair:
+            continue
+
+        checked += 1
+
+        print(
+            f"{GRAY}[WHALE] Checking "
+            f"{address[:8]}...{address[-6:]}{RESET}"
+        )
+
+        security = get_solana_security(address)
+
+        if not security:
+            continue
+
+        whale = analyze_holders(security)
+
+        if not whale["available"]:
+            continue
+
+        base_token = pair.get("baseToken") or {}
+
+        symbol = base_token.get("symbol") or "UNKNOWN"
+        name = base_token.get("name") or "UNKNOWN"
+
+        clear()
+
+        print(f"{CYAN}{BOLD}")
+        print("╔══════════════════════════════════════════════════════════════╗")
+        print("║                     WHALE ENGINE TEST                       ║")
+        print("╚══════════════════════════════════════════════════════════════╝")
+        print(RESET)
+
+        print(
+            f"{WHITE}{BOLD}{symbol} — {name}{RESET}"
+        )
+
+        print(
+            f"{GRAY}Solana{RESET}"
+        )
+
+        line()
+
+        print(
+            f"{WHITE}Token Address:{RESET}"
+        )
+
+        print(
+            f"{GRAY}{address}{RESET}"
+        )
+
+        line()
+
+        print(f"{CYAN}{BOLD}HOLDER DATA{RESET}")
+
+        print(
+            f"  Holder Count : "
+            f"{whale['holder_count']:,}"
+        )
+
+        print(
+            f"  Top Holder   : "
+            f"{whale['top_holder_percent']:.2f}%"
+        )
+
+        print(
+            f"  Top 10       : "
+            f"{whale['top10_percent']:.2f}%"
+        )
+
+        print(
+            f"  Locked       : "
+            f"{whale['locked_percent']:.2f}%"
+        )
+
+        line()
+
+        print(f"{CYAN}{BOLD}WHALE RISK{RESET}")
+
+        print(
+            f"  Risk Score   : "
+            f"{whale['risk']}"
+        )
+
+        if whale["risk"] == 0:
+
+            print(
+                f"  Status       : "
+                f"{GREEN}LOW{RESET}"
+            )
+
+        elif whale["risk"] < 20:
+
+            print(
+                f"  Status       : "
+                f"{YELLOW}MODERATE{RESET}"
+            )
+
+        else:
+
+            print(
+                f"  Status       : "
+                f"{RED}HIGH{RESET}"
+            )
+
+        print()
+
+        print(f"{CYAN}{BOLD}ANALYSIS{RESET}")
+
+        for reason in whale["reasons"]:
+
+            print(
+                f"  • {reason}"
+            )
+
+        line()
+
+        print(f"{CYAN}{BOLD}RAW ENGINE STATUS{RESET}")
+
+        print(
+            f"  GoPlus       : "
+            f"{GREEN}CONNECTED{RESET}"
+        )
+
+        print(
+            f"  Holder Data  : "
+            f"{GREEN}AVAILABLE{RESET}"
+        )
+
+        print(
+            f"  Engine       : "
+            f"{GREEN}OPERATIONAL{RESET}"
+        )
+
+        line()
+
+        if whale["risk"] < 20:
+
+            print(
+                f"{GREEN}"
+                "✓ Whale concentration is currently acceptable."
+                f"{RESET}"
+            )
+
+        else:
+
+            print(
+                f"{RED}"
+                "✗ Whale concentration is too high."
+                f"{RESET}"
+            )
+
+        pause()
+
+        return
+
+    clear()
+
+    print(
+        f"{RED}[WHALE] No suitable live Solana token "
+        f"with holder data was found.{RESET}"
+    )
+
+    print()
+
+    print(
+        f"{GRAY}"
+        f"Solana candidates checked: {checked}"
+        f"{RESET}"
+    )
+
+    print(
+        f"{GRAY}"
+        "GoPlus holder data may be unavailable for "
+        "current candidates."
+        f"{RESET}"
+    )
+
+    pause()
+
+
+# ============================================================
 # ANALYSIS ENGINE
 # ============================================================
 
@@ -441,10 +658,6 @@ def calculate_analysis(pair, security):
 
     age_hours = get_token_age_hours(pair)
 
-    # --------------------------------------------------------
-    # BUY PRESSURE
-    # --------------------------------------------------------
-
     total_5m = buys_5m + sells_5m
     total_1h = buys_1h + sells_1h
 
@@ -458,15 +671,7 @@ def calculate_analysis(pair, security):
         if total_1h > 0 else 0
     )
 
-    # --------------------------------------------------------
-    # WHALE ANALYSIS
-    # --------------------------------------------------------
-
     whale = analyze_holders(security)
-
-    # --------------------------------------------------------
-    # RISK
-    # --------------------------------------------------------
 
     risk = 0
     risk_reasons = []
@@ -515,7 +720,6 @@ def calculate_analysis(pair, security):
         risk += 2
         risk_reasons.append("Very new token")
 
-    # Whale risk
     risk += whale["risk"]
 
     for reason in whale["reasons"]:
@@ -523,10 +727,6 @@ def calculate_analysis(pair, security):
             risk_reasons.append(
                 f"Whale: {reason}"
             )
-
-    # --------------------------------------------------------
-    # SECURITY
-    # --------------------------------------------------------
 
     security_available = security is not None
     security_safe = False
@@ -572,10 +772,6 @@ def calculate_analysis(pair, security):
         risk_reasons.append(
             "Security data unavailable"
         )
-
-    # --------------------------------------------------------
-    # OPPORTUNITY
-    # --------------------------------------------------------
 
     opportunity = 0
     opportunity_reasons = []
@@ -670,7 +866,6 @@ def calculate_analysis(pair, security):
             "Security checks passed"
         )
 
-    # Healthy holder distribution gives a small opportunity bonus.
     if whale["available"]:
 
         if whale["top_holder_percent"] < 15:
@@ -686,10 +881,6 @@ def calculate_analysis(pair, security):
             )
 
     opportunity = min(opportunity, 100)
-
-    # --------------------------------------------------------
-    # CONFIDENCE
-    # --------------------------------------------------------
 
     confidence = 100
     confidence_reasons = []
@@ -735,10 +926,6 @@ def calculate_analysis(pair, security):
         min(confidence, 100)
     )
 
-    # --------------------------------------------------------
-    # FINAL SIGNAL
-    # --------------------------------------------------------
-
     critical_ok = (
         liquidity >= MIN_LIQUIDITY
         and volume >= MIN_VOLUME
@@ -756,10 +943,6 @@ def calculate_analysis(pair, security):
     )
 
     signal = "BUY" if buy else "RISK"
-
-    # --------------------------------------------------------
-    # KRYPT SCORE
-    # --------------------------------------------------------
 
     krypt_score = (
         opportunity * 0.55
@@ -1305,6 +1488,10 @@ def crypto_radar():
         )
 
         print(
+            f"{WHITE}[04] WHALE ENGINE TEST{RESET}"
+        )
+
+        print(
             f"{WHITE}[00] BACK{RESET}"
         )
 
@@ -1400,6 +1587,10 @@ def crypto_radar():
             )
 
             pause()
+
+        elif choice in ("04", "4"):
+
+            whale_test()
 
         elif choice in ("00", "0"):
 
