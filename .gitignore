@@ -2,3 +2,4 @@ __pycache__/
 *.pyc
 krypt_backup.py
 .venv/
+krypt_radar_memory.json
