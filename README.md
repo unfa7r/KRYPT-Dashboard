@@ -12,6 +12,7 @@ pkg install -y git
 Projeyi indir:
 
 git clone https://github.com/unfa7r/KRYPT-Dashboard.git
+
 cd KRYPT-Dashboard
 
 Kur:
@@ -22,11 +23,5 @@ bash install.sh
 
 python krypt.py
 
-Menü
-
-01 - CRYPTO RADAR
-02 - NOTES
-03 - SYSTEM
-00 - EXIT
 
 KRYPT hazır.
