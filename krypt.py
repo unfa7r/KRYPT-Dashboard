@@ -2,6 +2,7 @@ import os
 import sys
 import time
 import requests
+import json
 from datetime import datetime, timezone
 
 RESET = "\033[0m"
@@ -63,6 +64,119 @@ SESSION = requests.Session()
 SESSION.headers.update({
     "User-Agent": "KRYPT-Dashboard/2.0"
 })
+
+
+# ============================================================
+# RADAR MEMORY
+# ============================================================
+
+RADAR_MEMORY_FILE = "krypt_radar_memory.json"
+MAX_MEMORY_TOKENS = 20
+
+
+def load_radar_memory():
+
+    try:
+
+        if not os.path.exists(
+            RADAR_MEMORY_FILE
+        ):
+            return []
+
+        with open(
+            RADAR_MEMORY_FILE,
+            "r",
+            encoding="utf-8"
+        ) as file:
+
+            data = json.load(file)
+
+        return data if isinstance(data, list) else []
+
+    except Exception:
+        return []
+
+
+def save_radar_memory(results):
+
+    try:
+
+        memory = []
+
+        for item in results:
+
+            analysis = item.get(
+                "analysis",
+                {}
+            )
+
+            if analysis.get("signal") != "BUY":
+                continue
+
+            chain = item.get("chain")
+            address = item.get("address")
+
+            if not chain or not address:
+                continue
+
+            memory.append({
+                "chainId": chain,
+                "tokenAddress": address
+            })
+
+        old_memory = load_radar_memory()
+
+        combined = memory + old_memory
+
+        # Re-add recently strong BUY candidates so they are
+        # not lost when DexScreener discovery results rotate.
+        try:
+            memory = load_radar_memory()
+
+            for saved in memory:
+
+                if isinstance(saved, dict):
+                    profiles.append(saved)
+
+        except Exception:
+            pass
+
+        unique = []
+        seen = set()
+
+        for item in combined:
+
+            chain = item.get("chainId")
+            address = item.get("tokenAddress")
+
+            if not chain or not address:
+                continue
+
+            key = (
+                str(chain).lower(),
+                str(address).lower()
+            )
+
+            if key in seen:
+                continue
+
+            seen.add(key)
+            unique.append(item)
+
+        with open(
+            RADAR_MEMORY_FILE,
+            "w",
+            encoding="utf-8"
+        ) as file:
+
+            json.dump(
+                unique[:MAX_MEMORY_TOKENS],
+                file,
+                indent=2
+            )
+
+    except Exception:
+        pass
 
 
 # ============================================================
@@ -252,6 +366,81 @@ def get_latest_profiles():
 
                 if isinstance(top_boosts, list):
                     profiles.extend(top_boosts)
+
+        except Exception:
+            pass
+
+        # Expand discovery with DexScreener search.
+        # Search is used only to discover additional candidates;
+        # existing BUY / RISK logic remains unchanged.
+        search_terms = [
+            "sol",
+            "usdc",
+            "pump",
+            "ai",
+            "cat",
+            "dog",
+            "meme",
+            "swap"
+        ]
+
+        for term in search_terms:
+
+            try:
+                search_response = SESSION.get(
+                    "https://api.dexscreener.com/latest/dex/search",
+                    params={"q": term},
+                    timeout=15
+                )
+
+                if search_response.status_code != 200:
+                    continue
+
+                pairs = search_response.json().get(
+                    "pairs",
+                    []
+                )
+
+                if not isinstance(pairs, list):
+                    continue
+
+                for pair in pairs:
+
+                    if not isinstance(pair, dict):
+                        continue
+
+                    chain = pair.get("chainId")
+                    base_token = pair.get(
+                        "baseToken",
+                        {}
+                    )
+
+                    address = (
+                        base_token.get("address")
+                        if isinstance(base_token, dict)
+                        else None
+                    )
+
+                    if chain and address:
+                        profiles.append({
+                            "chainId": chain,
+                            "tokenAddress": address,
+                            "description": base_token.get(
+                                "name",
+                                ""
+                            )
+                        })
+
+            except Exception:
+                pass
+
+        # Re-add recently strong BUY candidates.
+        try:
+            memory = load_radar_memory()
+
+            for saved in memory:
+                if isinstance(saved, dict):
+                    profiles.append(saved)
 
         except Exception:
             pass
@@ -1664,6 +1853,8 @@ def scan_new_tokens():
     )
 
     print()
+
+    save_radar_memory(results)
 
     return results
 
