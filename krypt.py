@@ -4,11 +4,6 @@ import time
 import requests
 from datetime import datetime, timezone
 
-# ============================================================
-# KRYPT DASHBOARD
-# Crypto Radar
-# ============================================================
-
 RESET = "\033[0m"
 BOLD = "\033[1m"
 
@@ -62,7 +57,7 @@ def pause():
 
 def safe_float(value, default=0.0):
     try:
-        if value is None:
+        if value is None or value == "":
             return default
         return float(value)
     except:
@@ -71,7 +66,7 @@ def safe_float(value, default=0.0):
 
 def safe_int(value, default=0):
     try:
-        if value is None:
+        if value is None or value == "":
             return default
         return int(value)
     except:
@@ -113,25 +108,10 @@ def format_age(hours):
 def boot_animation():
     clear()
 
-    print(f"{CYAN}{BOLD}")
-    print("K")
-    time.sleep(0.15)
-
-    clear()
-    print("KR")
-    time.sleep(0.15)
-
-    clear()
-    print("KRY")
-    time.sleep(0.15)
-
-    clear()
-    print("KRYP")
-    time.sleep(0.15)
-
-    clear()
-    print("KRYPT")
-    time.sleep(0.25)
+    for logo in ["K", "KR", "KRY", "KRYP", "KRYPT"]:
+        clear()
+        print(f"{CYAN}{BOLD}{logo}{RESET}")
+        time.sleep(0.15)
 
     clear()
 
@@ -145,6 +125,7 @@ def boot_animation():
     type_text(f"{BLUE}[SYSTEM] Initializing radar...", 0.01)
     type_text(f"{BLUE}[SYSTEM] Connecting market feeds...", 0.01)
     type_text(f"{BLUE}[SYSTEM] Loading security engine...", 0.01)
+    type_text(f"{BLUE}[SYSTEM] Loading whale engine...", 0.01)
     type_text(f"{BLUE}[SYSTEM] Loading opportunity engine...", 0.01)
     type_text(f"{GREEN}[SYSTEM] ACCESS GRANTED{RESET}", 0.01)
 
@@ -167,10 +148,7 @@ def get_latest_profiles():
 
         data = response.json()
 
-        if isinstance(data, list):
-            return data
-
-        return []
+        return data if isinstance(data, list) else []
 
     except Exception:
         return []
@@ -229,7 +207,9 @@ def get_solana_security(token_address):
     try:
         response = SESSION.get(
             GOPLUS_SOLANA_URL,
-            params={"contract_addresses": token_address},
+            params={
+                "contract_addresses": token_address
+            },
             timeout=15
         )
 
@@ -237,15 +217,16 @@ def get_solana_security(token_address):
             return None
 
         data = response.json()
-
         result = data.get("result")
 
-        if isinstance(result, dict):
-            if token_address in result:
-                return result[token_address]
+        if not isinstance(result, dict):
+            return None
 
-            if len(result) == 1:
-                return next(iter(result.values()))
+        if token_address in result:
+            return result[token_address]
+
+        if len(result) == 1:
+            return next(iter(result.values()))
 
         return None
 
@@ -279,10 +260,150 @@ def get_token_age_hours(pair):
 
 
 # ============================================================
+# WHALE ENGINE
+# ============================================================
+
+def analyze_holders(security):
+    """
+    Analyze GoPlus top-10 holder data.
+
+    Percent values from GoPlus are represented as:
+    1.0 = 100%
+    0.10 = 10%
+    """
+
+    result = {
+        "available": False,
+        "holder_count": 0,
+        "top_holder_percent": 0.0,
+        "top10_percent": 0.0,
+        "locked_percent": 0.0,
+        "risk": 0,
+        "reasons": []
+    }
+
+    if not security:
+        result["reasons"].append(
+            "Holder data unavailable"
+        )
+        return result
+
+    holders = security.get("holders")
+
+    if not isinstance(holders, list) or not holders:
+        result["reasons"].append(
+            "Top holder data unavailable"
+        )
+        return result
+
+    result["available"] = True
+
+    result["holder_count"] = safe_int(
+        security.get("holder_count")
+    )
+
+    percentages = []
+
+    for holder in holders:
+
+        if not isinstance(holder, dict):
+            continue
+
+        percent = safe_float(
+            holder.get("percent")
+        )
+
+        percentages.append(percent)
+
+    if not percentages:
+        result["available"] = False
+        result["reasons"].append(
+            "Holder percentages unavailable"
+        )
+        return result
+
+    percentages.sort(reverse=True)
+
+    result["top_holder_percent"] = percentages[0] * 100
+    result["top10_percent"] = sum(percentages) * 100
+
+    locked_percent = 0.0
+
+    for holder in holders:
+
+        if not isinstance(holder, dict):
+            continue
+
+        if str(holder.get("is_locked")) == "1":
+
+            locked_percent += (
+                safe_float(holder.get("percent")) * 100
+            )
+
+    result["locked_percent"] = locked_percent
+
+    # --------------------------------------------------------
+    # WHALE RISK
+    # --------------------------------------------------------
+
+    top = result["top_holder_percent"]
+    top10 = result["top10_percent"]
+
+    if top >= 40:
+        result["risk"] += 20
+        result["reasons"].append(
+            f"Extreme top-holder concentration ({top:.1f}%)"
+        )
+
+    elif top >= 25:
+        result["risk"] += 12
+        result["reasons"].append(
+            f"High top-holder concentration ({top:.1f}%)"
+        )
+
+    elif top >= 15:
+        result["risk"] += 6
+        result["reasons"].append(
+            f"Moderate top-holder concentration ({top:.1f}%)"
+        )
+
+    if top10 >= 80:
+        result["risk"] += 15
+        result["reasons"].append(
+            f"Top 10 control {top10:.1f}%"
+        )
+
+    elif top10 >= 65:
+        result["risk"] += 10
+        result["reasons"].append(
+            f"Top 10 control {top10:.1f}%"
+        )
+
+    elif top10 >= 50:
+        result["risk"] += 5
+        result["reasons"].append(
+            f"Top 10 control {top10:.1f}%"
+        )
+
+    if locked_percent >= 30:
+        result["reasons"].append(
+            f"{locked_percent:.1f}% of top holders locked"
+        )
+
+    if not result["reasons"]:
+        result["reasons"].append(
+            "Holder distribution looks acceptable"
+        )
+
+    return result
+
+
+# ============================================================
 # ANALYSIS ENGINE
 # ============================================================
 
 def calculate_analysis(pair, security):
+
     liquidity = safe_float(
         (pair.get("liquidity") or {}).get("usd")
     )
@@ -321,22 +442,27 @@ def calculate_analysis(pair, security):
     age_hours = get_token_age_hours(pair)
 
     # --------------------------------------------------------
-    # BUY / SELL PRESSURE
+    # BUY PRESSURE
     # --------------------------------------------------------
 
     total_5m = buys_5m + sells_5m
-
-    if total_5m > 0:
-        buy_ratio_5m = buys_5m / total_5m
-    else:
-        buy_ratio_5m = 0
-
     total_1h = buys_1h + sells_1h
 
-    if total_1h > 0:
-        buy_ratio_1h = buys_1h / total_1h
-    else:
-        buy_ratio_1h = 0
+    buy_ratio_5m = (
+        buys_5m / total_5m
+        if total_5m > 0 else 0
+    )
+
+    buy_ratio_1h = (
+        buys_1h / total_1h
+        if total_1h > 0 else 0
+    )
+
+    # --------------------------------------------------------
+    # WHALE ANALYSIS
+    # --------------------------------------------------------
+
+    whale = analyze_holders(security)
 
     # --------------------------------------------------------
     # RISK
@@ -389,6 +515,15 @@ def calculate_analysis(pair, security):
         risk += 2
         risk_reasons.append("Very new token")
 
+    # Whale risk
+    risk += whale["risk"]
+
+    for reason in whale["reasons"]:
+        if "acceptable" not in reason.lower():
+            risk_reasons.append(
+                f"Whale: {reason}"
+            )
+
     # --------------------------------------------------------
     # SECURITY
     # --------------------------------------------------------
@@ -428,11 +563,15 @@ def calculate_analysis(pair, security):
 
         if not security_safe:
             risk += 20
-            risk_reasons.append("Security flags detected")
+            risk_reasons.append(
+                "Security flags detected"
+            )
 
     else:
         risk += 15
-        risk_reasons.append("Security data unavailable")
+        risk_reasons.append(
+            "Security data unavailable"
+        )
 
     # --------------------------------------------------------
     # OPPORTUNITY
@@ -443,63 +582,108 @@ def calculate_analysis(pair, security):
 
     if liquidity >= 100_000:
         opportunity += 20
-        opportunity_reasons.append("Strong liquidity")
+        opportunity_reasons.append(
+            "Strong liquidity"
+        )
 
     elif liquidity >= 50_000:
         opportunity += 16
-        opportunity_reasons.append("Good liquidity")
+        opportunity_reasons.append(
+            "Good liquidity"
+        )
 
     elif liquidity >= MIN_LIQUIDITY:
         opportunity += 10
-        opportunity_reasons.append("Acceptable liquidity")
+        opportunity_reasons.append(
+            "Acceptable liquidity"
+        )
 
     if volume >= 1_000_000:
         opportunity += 20
-        opportunity_reasons.append("Exceptional volume")
+        opportunity_reasons.append(
+            "Exceptional volume"
+        )
 
     elif volume >= 100_000:
         opportunity += 16
-        opportunity_reasons.append("Strong volume")
+        opportunity_reasons.append(
+            "Strong volume"
+        )
 
     elif volume >= MIN_VOLUME:
         opportunity += 10
-        opportunity_reasons.append("Healthy volume")
+        opportunity_reasons.append(
+            "Healthy volume"
+        )
 
     if 10 <= price_change_1h <= 100:
         opportunity += 15
-        opportunity_reasons.append("Healthy 1h momentum")
+        opportunity_reasons.append(
+            "Healthy 1h momentum"
+        )
 
     elif 0 < price_change_1h < 10:
         opportunity += 7
-        opportunity_reasons.append("Positive 1h momentum")
+        opportunity_reasons.append(
+            "Positive 1h momentum"
+        )
 
     if price_change_5m > 0:
         opportunity += 8
-        opportunity_reasons.append("Positive 5m momentum")
+        opportunity_reasons.append(
+            "Positive 5m momentum"
+        )
 
     if buy_ratio_5m >= 0.60:
         opportunity += 12
-        opportunity_reasons.append("Strong buy pressure")
+        opportunity_reasons.append(
+            "Strong buy pressure"
+        )
 
     elif buy_ratio_5m >= 0.52:
         opportunity += 7
-        opportunity_reasons.append("Buy pressure positive")
+        opportunity_reasons.append(
+            "Buy pressure positive"
+        )
 
     if total_5m >= 100:
         opportunity += 8
-        opportunity_reasons.append("High recent activity")
+        opportunity_reasons.append(
+            "High recent activity"
+        )
 
     elif total_5m >= 30:
         opportunity += 5
-        opportunity_reasons.append("Good recent activity")
+        opportunity_reasons.append(
+            "Good recent activity"
+        )
 
     if 1 <= age_hours <= 48:
         opportunity += 8
-        opportunity_reasons.append("Early-stage opportunity")
+        opportunity_reasons.append(
+            "Early-stage opportunity"
+        )
 
     if security_safe:
         opportunity += 6
-        opportunity_reasons.append("Security checks passed")
+        opportunity_reasons.append(
+            "Security checks passed"
+        )
+
+    # Healthy holder distribution gives a small opportunity bonus.
+    if whale["available"]:
+
+        if whale["top_holder_percent"] < 15:
+            opportunity += 5
+            opportunity_reasons.append(
+                "Healthy top-holder distribution"
+            )
+
+        if whale["top10_percent"] < 50:
+            opportunity += 4
+            opportunity_reasons.append(
+                "Healthy top-10 distribution"
+            )
 
     opportunity = min(opportunity, 100)
 
@@ -512,25 +696,44 @@ def calculate_analysis(pair, security):
 
     if liquidity <= 0:
         confidence -= 20
-        confidence_reasons.append("Liquidity data missing")
+        confidence_reasons.append(
+            "Liquidity data missing"
+        )
 
     if volume <= 0:
         confidence -= 15
-        confidence_reasons.append("Volume data missing")
+        confidence_reasons.append(
+            "Volume data missing"
+        )
 
     if total_5m < 10:
         confidence -= 10
-        confidence_reasons.append("Low transaction sample")
+        confidence_reasons.append(
+            "Low transaction sample"
+        )
 
     if not security_available:
         confidence -= 20
-        confidence_reasons.append("Security data unavailable")
+        confidence_reasons.append(
+            "Security data unavailable"
+        )
+
+    if not whale["available"]:
+        confidence -= 15
+        confidence_reasons.append(
+            "Holder data unavailable"
+        )
 
     if age_hours <= 0:
         confidence -= 10
-        confidence_reasons.append("Token age unknown")
+        confidence_reasons.append(
+            "Token age unknown"
+        )
 
-    confidence = max(0, min(confidence, 100))
+    confidence = max(
+        0,
+        min(confidence, 100)
+    )
 
     # --------------------------------------------------------
     # FINAL SIGNAL
@@ -541,6 +744,8 @@ def calculate_analysis(pair, security):
         and volume >= MIN_VOLUME
         and security_available
         and security_safe
+        and whale["available"]
+        and whale["risk"] < 20
     )
 
     buy = (
@@ -590,6 +795,8 @@ def calculate_analysis(pair, security):
         "security_available": security_available,
         "security_safe": security_safe,
 
+        "whale": whale,
+
         "risk_reasons": risk_reasons,
         "opportunity_reasons": opportunity_reasons,
         "confidence_reasons": confidence_reasons
@@ -601,12 +808,17 @@ def calculate_analysis(pair, security):
 # ============================================================
 
 def scan_new_tokens():
-    print(f"\n{CYAN}[RADAR] Scanning latest token profiles...{RESET}")
+
+    print(
+        f"\n{CYAN}[RADAR] Scanning latest token profiles...{RESET}"
+    )
 
     profiles = get_latest_profiles()
 
     if not profiles:
-        print(f"{RED}[ERROR] Could not retrieve token profiles.{RESET}")
+        print(
+            f"{RED}[ERROR] Could not retrieve token profiles.{RESET}"
+        )
         return []
 
     results = []
@@ -614,7 +826,8 @@ def scan_new_tokens():
     profiles = profiles[:30]
 
     print(
-        f"{GRAY}[RADAR] Profiles received: {len(profiles)}{RESET}"
+        f"{GRAY}[RADAR] Profiles received: "
+        f"{len(profiles)}{RESET}"
     )
 
     for index, profile in enumerate(profiles, 1):
@@ -659,12 +872,19 @@ def scan_new_tokens():
             "analysis": analysis
         })
 
+        signal_color = (
+            GREEN
+            if analysis["signal"] == "BUY"
+            else RED
+        )
+
         print(
             f"{GRAY}[{index:02d}/{len(profiles)}] "
             f"{symbol:<12} "
             f"KRYPT {analysis['krypt_score']:>5.1f} "
-            f"{GREEN if analysis['signal'] == 'BUY' else RED}"
-            f"{analysis['signal']}{RESET}"
+            f"{signal_color}"
+            f"{analysis['signal']}"
+            f"{RESET}"
         )
 
         time.sleep(0.15)
@@ -682,7 +902,9 @@ def scan_new_tokens():
 # ============================================================
 
 def show_buy_explanation(item):
+
     analysis = item["analysis"]
+    whale = analysis["whale"]
 
     clear()
 
@@ -699,8 +921,7 @@ def show_buy_explanation(item):
     )
 
     print(
-        f"{GRAY}Chain: {item['chain']}"
-        f"{RESET}"
+        f"{GRAY}Chain: {item['chain']}{RESET}"
     )
 
     line()
@@ -736,35 +957,93 @@ def show_buy_explanation(item):
     for reason in analysis["opportunity_reasons"]:
         print(f"{GREEN}  + {reason}{RESET}")
 
-    if not analysis["opportunity_reasons"]:
-        print(f"{GRAY}  No major opportunity factors.{RESET}")
+    line()
+
+    print(f"{CYAN}{BOLD}WHALE ANALYSIS{RESET}")
+
+    if whale["available"]:
+
+        print(
+            f"  Holders       : "
+            f"{whale['holder_count']:,}"
+        )
+
+        print(
+            f"  Top holder    : "
+            f"{whale['top_holder_percent']:.2f}%"
+        )
+
+        print(
+            f"  Top 10        : "
+            f"{whale['top10_percent']:.2f}%"
+        )
+
+        print(
+            f"  Locked        : "
+            f"{whale['locked_percent']:.2f}%"
+        )
+
+        if whale["risk"] == 0:
+            print(
+                f"  Whale Risk    : "
+                f"{GREEN}LOW{RESET}"
+            )
+
+        elif whale["risk"] < 20:
+            print(
+                f"  Whale Risk    : "
+                f"{YELLOW}MODERATE{RESET}"
+            )
+
+        else:
+            print(
+                f"  Whale Risk    : "
+                f"{RED}HIGH{RESET}"
+            )
+
+        for reason in whale["reasons"]:
+            print(
+                f"  {GRAY}• {reason}{RESET}"
+            )
+
+    else:
+
+        print(
+            f"{RED}  Holder data unavailable{RESET}"
+        )
 
     line()
 
     print(f"{CYAN}{BOLD}MARKET DATA{RESET}")
 
     print(
-        f"  Liquidity : {format_money(analysis['liquidity'])}"
+        f"  Liquidity : "
+        f"{format_money(analysis['liquidity'])}"
     )
 
     print(
-        f"  Volume 24h: {format_money(analysis['volume'])}"
+        f"  Volume 24h: "
+        f"{format_money(analysis['volume'])}"
     )
 
     print(
-        f"  Volume 5m : {format_money(analysis['volume_5m'])}"
+        f"  Volume 5m : "
+        f"{format_money(analysis['volume_5m'])}"
     )
 
     print(
-        f"  5m Change : {analysis['price_change_5m']:+.2f}%"
+        f"  5m Change : "
+        f"{analysis['price_change_5m']:+.2f}%"
     )
 
     print(
-        f"  1h Change : {analysis['price_change_1h']:+.2f}%"
+        f"  1h Change : "
+        f"{analysis['price_change_1h']:+.2f}%"
     )
 
     print(
-        f"  24h Change: {analysis['price_change_24h']:+.2f}%"
+        f"  24h Change: "
+        f"{analysis['price_change_24h']:+.2f}%"
     )
 
     print(
@@ -778,7 +1057,8 @@ def show_buy_explanation(item):
     )
 
     print(
-        f"  Token Age : {format_age(analysis['age_hours'])}"
+        f"  Token Age : "
+        f"{format_age(analysis['age_hours'])}"
     )
 
     line()
@@ -797,6 +1077,7 @@ def show_buy_explanation(item):
             )
 
     else:
+
         print(
             f"{RED}  ✗ Security data unavailable{RESET}"
         )
@@ -805,45 +1086,55 @@ def show_buy_explanation(item):
 
     print(f"{CYAN}{BOLD}DECISION LOGIC{RESET}")
 
-    print(
-        f"  Risk <= {MAX_BUY_RISK}%          : "
-        f"{GREEN if analysis['risk'] <= MAX_BUY_RISK else RED}"
-        f"{'PASS' if analysis['risk'] <= MAX_BUY_RISK else 'FAIL'}"
-        f"{RESET}"
-    )
+    checks = [
+        (
+            f"Risk <= {MAX_BUY_RISK}%",
+            analysis["risk"] <= MAX_BUY_RISK
+        ),
+        (
+            f"Opportunity >= {MIN_BUY_OPPORTUNITY}",
+            analysis["opportunity"] >= MIN_BUY_OPPORTUNITY
+        ),
+        (
+            f"Confidence >= {MIN_BUY_CONFIDENCE}%",
+            analysis["confidence"] >= MIN_BUY_CONFIDENCE
+        ),
+        (
+            f"Liquidity >= {format_money(MIN_LIQUIDITY)}",
+            analysis["liquidity"] >= MIN_LIQUIDITY
+        ),
+        (
+            f"Volume >= {format_money(MIN_VOLUME)}",
+            analysis["volume"] >= MIN_VOLUME
+        ),
+        (
+            "Security = PASS",
+            analysis["security_available"]
+            and analysis["security_safe"]
+        ),
+        (
+            "Whale risk acceptable",
+            whale["available"]
+            and whale["risk"] < 20
+        )
+    ]
 
-    print(
-        f"  Opportunity >= {MIN_BUY_OPPORTUNITY}: "
-        f"{GREEN if analysis['opportunity'] >= MIN_BUY_OPPORTUNITY else RED}"
-        f"{'PASS' if analysis['opportunity'] >= MIN_BUY_OPPORTUNITY else 'FAIL'}"
-        f"{RESET}"
-    )
+    for label, passed in checks:
 
-    print(
-        f"  Confidence >= {MIN_BUY_CONFIDENCE}% : "
-        f"{GREEN if analysis['confidence'] >= MIN_BUY_CONFIDENCE else RED}"
-        f"{'PASS' if analysis['confidence'] >= MIN_BUY_CONFIDENCE else 'FAIL'}"
-        f"{RESET}"
-    )
+        color = GREEN if passed else RED
+        status = "PASS" if passed else "FAIL"
 
-    print(
-        f"  Liquidity >= {format_money(MIN_LIQUIDITY)} : "
-        f"{GREEN if analysis['liquidity'] >= MIN_LIQUIDITY else RED}"
-        f"{'PASS' if analysis['liquidity'] >= MIN_LIQUIDITY else 'FAIL'}"
-        f"{RESET}"
-    )
-
-    print(
-        f"  Volume >= {format_money(MIN_VOLUME)}     : "
-        f"{GREEN if analysis['volume'] >= MIN_VOLUME else RED}"
-        f"{'PASS' if analysis['volume'] >= MIN_VOLUME else 'FAIL'}"
-        f"{RESET}"
-    )
+        print(
+            f"  {label:<34} "
+            f"{color}{status}{RESET}"
+        )
 
     print()
 
     print(
-        f"{YELLOW}⚠ BUY = model signal, NOT a guaranteed profit.{RESET}"
+        f"{YELLOW}"
+        "⚠ BUY = model signal, NOT a guaranteed profit."
+        f"{RESET}"
     )
 
     pause()
@@ -864,12 +1155,17 @@ def show_results(results):
     print(RESET)
 
     if not results:
-        print(f"{RED}No valid tokens found.{RESET}")
+
+        print(
+            f"{RED}No valid tokens found.{RESET}"
+        )
+
         pause()
         return
 
     buy_count = sum(
-        1 for item in results
+        1
+        for item in results
         if item["analysis"]["signal"] == "BUY"
     )
 
@@ -904,14 +1200,23 @@ def show_results(results):
         )
 
         print(
-            f"    Liquidity: {format_money(analysis['liquidity']):>9}   "
-            f"Volume: {format_money(analysis['volume']):>9}"
+            f"    Liquidity: "
+            f"{format_money(analysis['liquidity']):>9}   "
+            f"Volume: "
+            f"{format_money(analysis['volume']):>9}"
         )
 
         print(
             f"    5m: {analysis['price_change_5m']:+7.2f}%   "
             f"1h: {analysis['price_change_1h']:+7.2f}%   "
             f"Age: {format_age(analysis['age_hours'])}"
+        )
+
+        print(
+            f"    Whale Top: "
+            f"{analysis['whale']['top_holder_percent']:.1f}%   "
+            f"Top10: "
+            f"{analysis['whale']['top10_percent']:.1f}%"
         )
 
         print(
@@ -922,8 +1227,11 @@ def show_results(results):
         )
 
         if analysis["signal"] == "BUY":
+
             print(
-                f"    {GREEN}→ BUY explanation available{RESET}"
+                f"    {GREEN}"
+                f"→ BUY explanation available"
+                f"{RESET}"
             )
 
         print()
@@ -935,12 +1243,14 @@ def show_results(results):
     )
 
     print(
-        f"{GRAY}Showing top 10 candidates by KRYPT score.{RESET}"
+        f"{GRAY}"
+        "Showing top 10 candidates by KRYPT score."
+        f"{RESET}"
     )
 
-    # If there is a BUY, allow user to inspect it.
     buy_items = [
-        item for item in results
+        item
+        for item in results
         if item["analysis"]["signal"] == "BUY"
     ]
 
@@ -948,8 +1258,7 @@ def show_results(results):
 
         print()
         print(
-            f"{CYAN}[B] View BUY explanation"
-            f"{RESET}"
+            f"{CYAN}[B] View BUY explanation{RESET}"
         )
 
         choice = input(
@@ -957,9 +1266,11 @@ def show_results(results):
         ).strip().lower()
 
         if choice == "b":
+
             show_buy_explanation(
                 buy_items[0]
             )
+
             return
 
     pause()
@@ -981,26 +1292,38 @@ def crypto_radar():
         print("╚══════════════════════════════════════════════════════════════╝")
         print(RESET)
 
-        print(f"{WHITE}[01] SCAN NEW / UNKNOWN COINS{RESET}")
-        print(f"{WHITE}[02] LOW RISK TOP PICKS{RESET}")
-        print(f"{WHITE}[03] BUY RULES{RESET}")
-        print(f"{WHITE}[00] BACK{RESET}")
+        print(
+            f"{WHITE}[01] SCAN NEW / UNKNOWN COINS{RESET}"
+        )
+
+        print(
+            f"{WHITE}[02] LOW RISK TOP PICKS{RESET}"
+        )
+
+        print(
+            f"{WHITE}[03] BUY RULES{RESET}"
+        )
+
+        print(
+            f"{WHITE}[00] BACK{RESET}"
+        )
 
         choice = input(
             f"\n{CYAN}KRYPT > {RESET}"
         ).strip()
 
-        if choice == "01" or choice == "1":
+        if choice in ("01", "1"):
 
             results = scan_new_tokens()
             show_results(results)
 
-        elif choice == "02" or choice == "2":
+        elif choice in ("02", "2"):
 
             results = scan_new_tokens()
 
             low_risk = [
-                item for item in results
+                item
+                for item in results
                 if item["analysis"]["risk"] <= MAX_BUY_RISK
             ]
 
@@ -1014,15 +1337,20 @@ def crypto_radar():
 
             show_results(low_risk)
 
-        elif choice == "03" or choice == "3":
+        elif choice in ("03", "3"):
 
             clear()
 
-            print(f"{CYAN}{BOLD}KRYPT BUY RULES{RESET}")
+            print(
+                f"{CYAN}{BOLD}KRYPT BUY RULES{RESET}"
+            )
+
             line()
 
             print(
-                f"{GREEN}BUY requires ALL of the following:{RESET}\n"
+                f"{GREEN}"
+                "BUY requires ALL of the following:"
+                f"{RESET}\n"
             )
 
             print(
@@ -1030,23 +1358,31 @@ def crypto_radar():
             )
 
             print(
-                f"  Opportunity  >= {MIN_BUY_OPPORTUNITY}/100"
+                f"  Opportunity  >= "
+                f"{MIN_BUY_OPPORTUNITY}/100"
             )
 
             print(
-                f"  Confidence   >= {MIN_BUY_CONFIDENCE}%"
+                f"  Confidence   >= "
+                f"{MIN_BUY_CONFIDENCE}%"
             )
 
             print(
-                f"  Liquidity    >= {format_money(MIN_LIQUIDITY)}"
+                f"  Liquidity    >= "
+                f"{format_money(MIN_LIQUIDITY)}"
             )
 
             print(
-                f"  Volume 24h   >= {format_money(MIN_VOLUME)}"
+                f"  Volume 24h   >= "
+                f"{format_money(MIN_VOLUME)}"
             )
 
             print(
-                f"  Security     = PASS"
+                "  Security     = PASS"
+            )
+
+            print(
+                "  Whale Risk   = ACCEPTABLE"
             )
 
             print()
@@ -1065,11 +1401,16 @@ def crypto_radar():
 
             pause()
 
-        elif choice == "00" or choice == "0":
+        elif choice in ("00", "0"):
+
             return
 
         else:
-            print(f"{RED}Invalid selection.{RESET}")
+
+            print(
+                f"{RED}Invalid selection.{RESET}"
+            )
+
             time.sleep(1)
 
 
@@ -1081,7 +1422,10 @@ def notes():
 
     clear()
 
-    print(f"{CYAN}{BOLD}NOTES{RESET}")
+    print(
+        f"{CYAN}{BOLD}NOTES{RESET}"
+    )
+
     line()
 
     print(
@@ -1101,7 +1445,10 @@ def system_menu():
 
     clear()
 
-    print(f"{CYAN}{BOLD}SYSTEM{RESET}")
+    print(
+        f"{CYAN}{BOLD}SYSTEM{RESET}"
+    )
+
     line()
 
     print(
@@ -1117,6 +1464,10 @@ def system_menu():
     )
 
     print(
+        f"{WHITE}Whale Engine : ONLINE{RESET}"
+    )
+
+    print(
         f"{WHITE}Opportunity  : ONLINE{RESET}"
     )
 
@@ -1128,7 +1479,7 @@ def system_menu():
 
 
 # ============================================================
-# MAIN DASHBOARD
+# DASHBOARD
 # ============================================================
 
 def dashboard():
@@ -1155,25 +1506,28 @@ def dashboard():
             f"{CYAN}KRYPT > {RESET}"
         ).strip()
 
-        if choice == "01" or choice == "1":
+        if choice in ("01", "1"):
 
             crypto_radar()
 
-        elif choice == "02" or choice == "2":
+        elif choice in ("02", "2"):
 
             notes()
 
-        elif choice == "03" or choice == "3":
+        elif choice in ("03", "3"):
 
             system_menu()
 
-        elif choice == "00" or choice == "0":
+        elif choice in ("00", "0"):
 
             clear()
+
             print(
                 f"{CYAN}KRYPT shutting down...{RESET}"
             )
+
             time.sleep(0.5)
+
             sys.exit()
 
         else:
