@@ -71,8 +71,27 @@ SESSION.headers.update({
 # ============================================================
 
 RADAR_MEMORY_FILE = "krypt_radar_memory.json"
+POSITIONS_FILE = "krypt_positions.json"
 NOTES_FILE = "krypt_notes.json"
 MAX_MEMORY_TOKENS = 20
+
+
+def load_positions():
+    if not os.path.exists(POSITIONS_FILE):
+        return []
+
+    try:
+        with open(POSITIONS_FILE, "r", encoding="utf-8") as f:
+            data = json.load(f)
+            return data if isinstance(data, list) else []
+    except Exception:
+        return []
+
+
+def save_positions(positions):
+    with open(POSITIONS_FILE, "w", encoding="utf-8") as f:
+        json.dump(positions, f, indent=2, ensure_ascii=False)
+
 
 
 def load_radar_memory():
@@ -1290,6 +1309,258 @@ def analyze_security(security):
 # ANALYSIS ENGINE
 # ============================================================
 
+
+def calculate_position_status(
+    analysis,
+    entry_price,
+    current_price
+):
+
+    risk = analysis["risk"]
+    opportunity = analysis["opportunity"]
+    confidence = analysis["confidence"]
+
+    liquidity = analysis["liquidity"]
+    volume = analysis["volume"]
+
+    price_change_5m = analysis["price_change_5m"]
+    price_change_1h = analysis["price_change_1h"]
+
+    whale_risk = analysis.get(
+        "whale_risk",
+        100
+    )
+
+    security_safe = analysis.get(
+        "security_safe",
+        False
+    )
+
+    if entry_price > 0:
+
+        pnl_percent = (
+            (current_price - entry_price)
+            / entry_price
+        ) * 100
+
+    else:
+
+        pnl_percent = 0
+
+    # ========================================================
+    # EXIT SCORE
+    # ========================================================
+
+    exit_score = 0
+    exit_reasons = []
+
+    if not security_safe:
+
+        exit_score += 40
+
+        exit_reasons.append(
+            "Security deterioration"
+        )
+
+    if whale_risk >= 20:
+
+        exit_score += 30
+
+        exit_reasons.append(
+            "High whale risk"
+        )
+
+    if liquidity < 5000:
+
+        exit_score += 30
+
+        exit_reasons.append(
+            "Critical liquidity"
+        )
+
+    elif liquidity < MIN_LIQUIDITY:
+
+        exit_score += 10
+
+        exit_reasons.append(
+            "Liquidity weakened"
+        )
+
+    if volume < 1000:
+
+        exit_score += 25
+
+        exit_reasons.append(
+            "Critical volume"
+        )
+
+    elif volume < MIN_VOLUME:
+
+        exit_score += 8
+
+        exit_reasons.append(
+            "Volume weakened"
+        )
+
+    if risk >= 50:
+
+        exit_score += 25
+
+        exit_reasons.append(
+            "Severe risk"
+        )
+
+    elif risk > MAX_BUY_RISK:
+
+        exit_score += 10
+
+        exit_reasons.append(
+            "Risk increased"
+        )
+
+    if (
+        price_change_5m <= -20
+        and price_change_1h <= -10
+    ):
+
+        exit_score += 25
+
+        exit_reasons.append(
+            "Momentum breakdown"
+        )
+
+    elif (
+        price_change_5m <= -10
+        and price_change_1h < 0
+    ):
+
+        exit_score += 10
+
+        exit_reasons.append(
+            "Momentum weakening"
+        )
+
+    # ========================================================
+    # HARD EXIT
+    # ========================================================
+
+    if (
+        not security_safe
+        and whale_risk >= 20
+    ):
+
+        return {
+            "status": "EXIT",
+            "reason": "Security + whale risk",
+            "reasons": exit_reasons,
+            "score": exit_score,
+            "pnl_percent": pnl_percent
+        }
+
+    if (
+        liquidity < 5000
+        and volume < 1000
+    ):
+
+        return {
+            "status": "EXIT",
+            "reason": "Liquidity + volume collapse",
+            "reasons": exit_reasons,
+            "score": exit_score,
+            "pnl_percent": pnl_percent
+        }
+
+    if exit_score >= 60:
+
+        return {
+            "status": "EXIT",
+            "reason": exit_reasons[0],
+            "reasons": exit_reasons,
+            "score": exit_score,
+            "pnl_percent": pnl_percent
+        }
+
+    # ========================================================
+    # WATCH SCORE
+    # ========================================================
+
+    watch_score = 0
+    watch_reasons = []
+
+    if risk > MAX_BUY_RISK:
+
+        watch_score += 15
+
+        watch_reasons.append(
+            "Risk above BUY threshold"
+        )
+
+    if opportunity < MIN_BUY_OPPORTUNITY:
+
+        watch_score += 15
+
+        watch_reasons.append(
+            "Opportunity weakened"
+        )
+
+    if confidence < MIN_BUY_CONFIDENCE:
+
+        watch_score += 15
+
+        watch_reasons.append(
+            "Confidence weakened"
+        )
+
+    if (
+        price_change_5m < 0
+        and price_change_1h < 0
+    ):
+
+        watch_score += 15
+
+        watch_reasons.append(
+            "Momentum weakening"
+        )
+
+    if liquidity < MIN_LIQUIDITY:
+
+        watch_score += 10
+
+        watch_reasons.append(
+            "Liquidity weakening"
+        )
+
+    if volume < MIN_VOLUME:
+
+        watch_score += 10
+
+        watch_reasons.append(
+            "Volume weakening"
+        )
+
+    if watch_score >= 25:
+
+        return {
+            "status": "WATCH",
+            "reason": watch_reasons[0],
+            "reasons": watch_reasons,
+            "score": watch_score,
+            "pnl_percent": pnl_percent
+        }
+
+    # ========================================================
+    # HOLD
+    # ========================================================
+
+    return {
+        "status": "HOLD",
+        "reason": "Position structure remains strong",
+        "reasons": [],
+        "score": 0,
+        "pnl_percent": pnl_percent
+    }
+
+
 def calculate_analysis(pair, security):
 
     liquidity = safe_float(
@@ -1803,6 +2074,10 @@ def calculate_analysis(pair, security):
         ),
 
         "signal": signal,
+
+        "whale_risk": whale["risk"],
+
+        "security_safe": security_result["safe"],
 
         "liquidity": liquidity,
 
@@ -3195,6 +3470,399 @@ def system_menu():
 # DASHBOARD
 # ============================================================
 
+def my_positions():
+
+    while True:
+
+        clear()
+
+        print(f"{CYAN}{BOLD}")
+        print("╔══════════════════════════════════════════════════════════════╗")
+        print("║                       MY POSITIONS                          ║")
+        print("╚══════════════════════════════════════════════════════════════╝")
+        print(RESET)
+
+        print(f"{WHITE}[01]{RESET} I BOUGHT")
+        print(f"{WHITE}[02]{RESET} MY POSITIONS")
+        print(f"{WHITE}[03]{RESET} I SOLD")
+        print()
+        print(f"{GRAY}[00] BACK{RESET}")
+        line()
+
+        choice = input(f"{WHITE}Selection: {RESET}").strip()
+
+        if choice in ("01", "1"):
+            buy_position()
+
+        elif choice in ("02", "2"):
+            view_positions()
+
+        elif choice in ("03", "3"):
+            sell_position()
+
+        elif choice in ("00", "0"):
+            return
+
+        else:
+            print(f"{RED}Invalid selection.{RESET}")
+            time.sleep(1)
+
+
+def buy_position():
+
+    results = scan_memory_tokens()
+
+    if not results:
+        pause()
+        return
+
+    clear()
+
+    print(f"{CYAN}{BOLD}SELECT COIN TO BUY{RESET}")
+    line()
+
+    for index, item in enumerate(results, 1):
+        print(
+            f"{WHITE}[{index:02d}]{RESET} "
+            f"{BOLD}{item['symbol']}{RESET} "
+            f"{GRAY}({item['chain']}){RESET}"
+        )
+
+    print()
+    print(f"{GRAY}[00] BACK{RESET}")
+    line()
+
+    choice = input(f"{WHITE}Selection: {RESET}").strip()
+
+    if choice in ("00", "0"):
+        return
+
+    try:
+        index = int(choice) - 1
+        item = results[index]
+    except (ValueError, IndexError):
+        print(f"{RED}Invalid selection.{RESET}")
+        time.sleep(1)
+        return
+
+    price = float(item['pair'].get('priceUsd') or 0)
+
+    if price <= 0:
+        print(f"{RED}Live price unavailable.{RESET}")
+        pause()
+        return
+
+    clear()
+
+    print(f"{CYAN}{BOLD}I BOUGHT — {item['symbol']}{RESET}")
+    line()
+
+    print(f"{WHITE}Current price : ${price:.12g}{RESET}")
+
+    invested_input = input(f"{WHITE}USD INVESTMENT: ${RESET}").strip()
+
+    try:
+        invested = float(invested_input)
+        if invested <= 0:
+            raise ValueError
+    except ValueError:
+        print(f"{RED}Invalid USD amount.{RESET}")
+        time.sleep(1)
+        return
+
+    amount = invested / price
+
+    positions = load_positions()
+
+    positions.append({
+        "chainId": item["chain"],
+        "tokenAddress": item["address"],
+        "symbol": item["symbol"],
+        "name": item["name"],
+        "invested_usd": invested,
+        "entry_price": price,
+        "amount": amount,
+        "bought_at": datetime.now(timezone.utc).isoformat()
+    })
+
+    save_positions(positions)
+
+    print()
+    print(f"{GREEN}✓ POSITION SAVED{RESET}")
+    print(f"{WHITE}Coin      : {item['symbol']}{RESET}")
+    print(f"{WHITE}Invested  : ${invested:.2f}{RESET}")
+    print(f"{WHITE}Entry     : ${price:.12g}{RESET}")
+    print(f"{WHITE}Amount    : {amount:.8g} {item['symbol']}{RESET}")
+
+    pause()
+
+
+def view_positions():
+
+    positions = load_positions()
+
+    clear()
+
+    print(f"{CYAN}{BOLD}MY POSITIONS{RESET}")
+    line()
+
+    if not positions:
+        print(f"{GRAY}No open positions.{RESET}")
+        pause()
+        return
+
+    total_invested = 0.0
+    total_value = 0.0
+
+    for index, position in enumerate(positions, 1):
+
+        chain = position.get("chainId")
+        address = position.get("tokenAddress")
+
+        pairs = get_token_pairs(
+            chain,
+            address
+        )
+
+        pair = choose_best_pair(
+            pairs
+        )
+
+        if not pair:
+            print(
+                f"{RED}[{index:02d}] "
+                f"{position['symbol']} - price unavailable{RESET}"
+            )
+            print()
+            continue
+
+        current_price = float(
+            pair.get("priceUsd") or 0
+        )
+
+        invested = float(
+            position.get("invested_usd") or 0
+        )
+
+        amount = float(
+            position.get("amount") or 0
+        )
+
+        current_value = (
+            amount * current_price
+        )
+
+        pnl_usd = (
+            current_value - invested
+        )
+
+        pnl_percent = (
+            (pnl_usd / invested) * 100
+            if invested > 0
+            else 0
+        )
+
+        total_invested += invested
+        total_value += current_value
+
+        pnl_color = (
+            GREEN
+            if pnl_usd >= 0
+            else RED
+        )
+
+        print(
+            f"{WHITE}[{index:02d}] "
+            f"{BOLD}{position['symbol']}{RESET}"
+        )
+
+        print(
+            f"    Invested : "
+            f"${invested:.2f}"
+        )
+
+        print(
+            f"    Entry    : "
+            f"${float(position['entry_price']):.12g}"
+        )
+
+        print(
+            f"    Current  : "
+            f"${current_price:.12g}"
+        )
+
+        print(
+            f"    Amount   : "
+            f"{amount:.8g}"
+        )
+
+        print(
+            f"    Value    : "
+            f"${current_value:.2f}"
+        )
+
+        print(
+            f"    P/L      : "
+            f"{pnl_color}"
+            f"${pnl_usd:+.2f} "
+            f"({pnl_percent:+.2f}%)"
+            f"{RESET}"
+        )
+
+        security = get_token_security(
+            chain,
+            address
+        )
+
+        analysis = calculate_analysis(
+            pair,
+            security
+        )
+
+        position_status = calculate_position_status(
+            analysis,
+            float(position.get("entry_price") or 0),
+            current_price
+        )
+
+        status = position_status["status"]
+
+        if status == "HOLD":
+            status_color = GREEN
+            status_icon = "🟢"
+
+        elif status == "WATCH":
+            status_color = YELLOW
+            status_icon = "🟡"
+
+        else:
+            status_color = RED
+            status_icon = "🔴"
+
+        print(
+            f"    KRYPT     : "
+            f"{status_color}"
+            f"{status_icon} {status}"
+            f"{RESET}"
+        )
+
+        print(
+            f"    Reason    : "
+            f"{position_status['reason']}"
+        )
+
+        print()
+
+    total_pnl = total_value - total_invested
+
+    total_pnl_percent = (
+        (total_pnl / total_invested) * 100
+        if total_invested > 0
+        else 0
+    )
+
+    total_color = (
+        GREEN
+        if total_pnl >= 0
+        else RED
+    )
+
+    line()
+
+    print(
+        f"{WHITE}{BOLD}"
+        f"TOTAL INVESTED : "
+        f"${total_invested:.2f}"
+        f"{RESET}"
+    )
+
+    print(
+        f"{WHITE}{BOLD}"
+        f"TOTAL VALUE    : "
+        f"${total_value:.2f}"
+        f"{RESET}"
+    )
+
+    print(
+        f"{WHITE}{BOLD}"
+        f"TOTAL P/L      : "
+        f"{total_color}"
+        f"${total_pnl:+.2f} "
+        f"({total_pnl_percent:+.2f}%)"
+        f"{RESET}"
+    )
+
+    pause()
+
+
+def sell_position():
+
+    positions = load_positions()
+
+    clear()
+
+    print(f"{CYAN}{BOLD}I SOLD{RESET}")
+    line()
+
+    if not positions:
+        print(f"{GRAY}No open positions.{RESET}")
+        pause()
+        return
+
+    for index, position in enumerate(positions, 1):
+        print(
+            f"{WHITE}[{index:02d}]{RESET} "
+            f"{BOLD}{position["symbol"]}{RESET} "
+            f"{GRAY}${position["invested_usd"]:.2f} invested{RESET}"
+        )
+
+    print()
+    print(f"{GRAY}[00] BACK{RESET}")
+    line()
+
+    choice = input(
+        f"{WHITE}Select position to sell: {RESET}"
+    ).strip()
+
+    if choice in ("00", "0"):
+        return
+
+    try:
+        index = int(choice) - 1
+        position = positions[index]
+    except (ValueError, IndexError):
+        print(f"{RED}Invalid selection.{RESET}")
+        time.sleep(1)
+        return
+
+    print()
+    print(
+        f"{WHITE}Sell {BOLD}{position["symbol"]}{RESET}"
+        f"{WHITE} and remove it from MY POSITIONS?{RESET}"
+    )
+
+    confirm = input(
+        f"{WHITE}Confirm (y/n): {RESET}"
+    ).strip().lower()
+
+    if confirm not in ("y", "yes"):
+        print(f"{GRAY}Sale cancelled.{RESET}")
+        pause()
+        return
+
+    removed = positions.pop(index)
+    save_positions(positions)
+
+    print()
+    print(
+        f"{GREEN}✓ {removed["symbol"]} removed from "
+        f"I BOUGHT Memory.{RESET}"
+    )
+
+    pause()
+
+
+
 def dashboard():
 
     while True:
@@ -3228,11 +3896,15 @@ def dashboard():
         )
 
         print(
-            "║  [02] NOTES                                                  ║"
+            "║  [02] MY POSITIONS                                           ║"
         )
 
         print(
-            "║  [03] SYSTEM                                                 ║"
+            "║  [03] NOTES                                                  ║"
+        )
+
+        print(
+            "║  [04] SYSTEM                                                 ║"
         )
 
         print(
@@ -3259,9 +3931,13 @@ def dashboard():
 
         elif choice in ("02", "2"):
 
-            notes()
+            my_positions()
 
         elif choice in ("03", "3"):
+
+            notes()
+
+        elif choice in ("04", "4"):
 
             system_menu()
 
