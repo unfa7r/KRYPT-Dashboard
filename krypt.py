@@ -18,6 +18,36 @@ GRAY = "\033[90m"
 DEX_PROFILES_URL = "https://api.dexscreener.com/token-profiles/latest/v1"
 DEX_TOKEN_PAIRS_URL = "https://api.dexscreener.com/token-pairs/v1/{chain}/{address}"
 GOPLUS_SOLANA_URL = "https://api.gopluslabs.io/api/v1/solana/token_security/"
+GOPLUS_EVM_URL = "https://api.gopluslabs.io/api/v1/token_security/{chain_id}"
+
+GOPLUS_CHAIN_IDS = {
+    "ethereum": "1",
+    "bsc": "56",
+    "arbitrum": "42161",
+    "polygon": "137",
+    "base": "8453",
+    "optimism": "10",
+    "avalanche": "43114",
+    "fantom": "250",
+    "linea": "59144",
+    "scroll": "534352",
+    "zksync": "324",
+    "mantle": "5000",
+    "blast": "81457",
+    "mode": "34443",
+    "manta": "169",
+    "gnosis": "100",
+    "celo": "42220",
+    "moonbeam": "1284",
+    "moonriver": "1285",
+    "opbnb": "204",
+    "berachain": "80094",
+    "unichain": "130",
+    "sonic": "146",
+    "monad": "143",
+    "plasma": "9745",
+    "robinhood": "4663",
+}
 
 MAX_BUY_RISK = 20
 MIN_BUY_OPPORTUNITY = 75
@@ -288,6 +318,48 @@ def get_solana_security(token_address):
         return None
 
 
+def get_token_security(chain, token_address):
+
+    chain_name = str(chain).lower().strip()
+
+    if chain_name == "solana":
+        return get_solana_security(token_address)
+
+    chain_id = GOPLUS_CHAIN_IDS.get(chain_name)
+
+    if not chain_id:
+        return None
+
+    try:
+        response = SESSION.get(
+            GOPLUS_EVM_URL.format(chain_id=chain_id),
+            params={
+                "contract_addresses": token_address
+            },
+            timeout=15
+        )
+
+        if response.status_code != 200:
+            return None
+
+        data = response.json()
+        result = data.get("result")
+
+        if not isinstance(result, dict):
+            return None
+
+        if token_address in result:
+            return result[token_address]
+
+        if len(result) == 1:
+            return next(iter(result.values()))
+
+        return None
+
+    except Exception:
+        return None
+
+
 # ============================================================
 # TOKEN AGE
 # ============================================================
@@ -386,6 +458,11 @@ def analyze_holders(security):
         percent = safe_float(
             holder.get("percent")
         )
+
+        # GoPlus holder percent is a ratio:
+        # 1.0 = 100%, 0.7502 = 75.02%
+        if 0 <= percent <= 1:
+            percent *= 100
 
         if percent > 0:
             percentages.append(percent)
@@ -529,81 +606,160 @@ def analyze_security(security):
     }
 
     if not security:
-
         result["reasons"].append(
             "Security data unavailable"
         )
-
         return result
 
     result["available"] = True
 
-    mintable = safe_int(
-        (security.get("mintable") or {}).get("status")
+    # ========================================================
+    # SOLANA SECURITY
+    # ========================================================
+
+    solana_fields = (
+        "mintable",
+        "freezable",
+        "closable",
+        "metadata_mutable",
+        "non_transferable"
     )
 
-    freezable = safe_int(
-        (security.get("freezable") or {}).get("status")
+    is_solana = any(
+        field in security
+        for field in solana_fields
     )
 
-    closable = safe_int(
-        (security.get("closable") or {}).get("status")
+    if is_solana:
+
+        mintable = safe_int(
+            (security.get("mintable") or {}).get("status")
+        )
+
+        freezable = safe_int(
+            (security.get("freezable") or {}).get("status")
+        )
+
+        closable = safe_int(
+            (security.get("closable") or {}).get("status")
+        )
+
+        metadata_mutable = safe_int(
+            (security.get("metadata_mutable") or {}).get("status")
+        )
+
+        non_transferable = safe_int(
+            security.get("non_transferable")
+        )
+
+        if mintable != 0:
+            result["risk"] += 8
+            result["reasons"].append(
+                "Mint authority risk detected"
+            )
+
+        if freezable != 0:
+            result["risk"] += 8
+            result["reasons"].append(
+                "Freeze authority risk detected"
+            )
+
+        if closable != 0:
+            result["risk"] += 8
+            result["reasons"].append(
+                "Token close authority detected"
+            )
+
+        if metadata_mutable != 0:
+            result["risk"] += 4
+            result["reasons"].append(
+                "Metadata remains mutable"
+            )
+
+        if non_transferable != 0:
+            result["risk"] += 15
+            result["reasons"].append(
+                "Token is non-transferable"
+            )
+
+    # ========================================================
+    # EVM SECURITY
+    # ========================================================
+
+    else:
+
+        is_open_source = safe_int(
+            security.get("is_open_source")
+        )
+
+        cannot_buy = safe_int(
+            security.get("cannot_buy")
+        )
+
+        buy_tax = safe_float(
+            security.get("buy_tax")
+        )
+
+        sell_tax = safe_float(
+            security.get("sell_tax")
+        )
+
+        is_in_dex = safe_int(
+            security.get("is_in_dex")
+        )
+
+        if is_open_source == 0:
+            result["risk"] += 12
+            result["reasons"].append(
+                "Contract is not open source"
+            )
+
+        if cannot_buy != 0:
+            result["risk"] += 20
+            result["reasons"].append(
+                "Buying may be restricted"
+            )
+
+        if buy_tax >= 10:
+            result["risk"] += 15
+            result["reasons"].append(
+                f"High buy tax ({buy_tax:.2f}%)"
+            )
+
+        elif buy_tax > 5:
+            result["risk"] += 8
+            result["reasons"].append(
+                f"Elevated buy tax ({buy_tax:.2f}%)"
+            )
+
+        if sell_tax >= 10:
+            result["risk"] += 20
+            result["reasons"].append(
+                f"High sell tax ({sell_tax:.2f}%)"
+            )
+
+        elif sell_tax > 5:
+            result["risk"] += 10
+            result["reasons"].append(
+                f"Elevated sell tax ({sell_tax:.2f}%)"
+            )
+
+        if is_in_dex == 0:
+            result["risk"] += 5
+            result["reasons"].append(
+                "Token not detected in DEX"
+            )
+
+    result["risk"] = min(
+        result["risk"],
+        100
     )
-
-    metadata_mutable = safe_int(
-        (security.get("metadata_mutable") or {}).get("status")
-    )
-
-    non_transferable = safe_int(
-        security.get("non_transferable")
-    )
-
-    if mintable != 0:
-
-        result["risk"] += 8
-
-        result["reasons"].append(
-            "Mint authority risk detected"
-        )
-
-    if freezable != 0:
-
-        result["risk"] += 8
-
-        result["reasons"].append(
-            "Freeze authority risk detected"
-        )
-
-    if closable != 0:
-
-        result["risk"] += 8
-
-        result["reasons"].append(
-            "Token close authority detected"
-        )
-
-    if metadata_mutable != 0:
-
-        result["risk"] += 4
-
-        result["reasons"].append(
-            "Metadata remains mutable"
-        )
-
-    if non_transferable != 0:
-
-        result["risk"] += 15
-
-        result["reasons"].append(
-            "Token is non-transferable"
-        )
 
     result["safe"] = (
         result["risk"] == 0
     )
 
     if result["safe"]:
-
         result["reasons"].append(
             "Core security checks passed"
         )
@@ -1276,29 +1432,17 @@ def scan_new_tokens():
         if not pair:
             continue
 
-        security = None
+        print(
+            f"{GRAY}"
+            f"[{index:02d}/{len(profiles)}] "
+            f"Security + Whale scan..."
+            f"{RESET}"
+        )
 
-        if chain.lower() == "solana":
-
-            print(
-                f"{GRAY}"
-                f"[{index:02d}/{len(profiles)}] "
-                f"Security + Whale scan..."
-                f"{RESET}"
-            )
-
-            security = get_solana_security(
-                address
-            )
-
-        else:
-
-            print(
-                f"{GRAY}"
-                f"[{index:02d}/{len(profiles)}] "
-                f"Market scan..."
-                f"{RESET}"
-            )
+        security = get_token_security(
+            chain,
+            address
+        )
 
         analysis = calculate_analysis(
             pair,
