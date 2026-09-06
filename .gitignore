@@ -1,0 +1,4 @@
+__pycache__/
+*.pyc
+krypt_backup.py
+.venv/
