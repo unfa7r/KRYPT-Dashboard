@@ -7,6 +7,7 @@ Kurulum
 Termux'u aç:
 
 pkg update -y
+
 pkg install -y git
 
 Projeyi indir:
