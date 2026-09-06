@@ -92,7 +92,61 @@ def load_radar_memory():
 
             data = json.load(file)
 
-        return data if isinstance(data, list) else []
+        if not isinstance(data, list):
+            return []
+
+        now = datetime.now(timezone.utc)
+        valid = []
+
+        for item in data:
+
+            if not isinstance(item, dict):
+                continue
+
+            saved_at = item.get("saved_at")
+
+            if not saved_at:
+
+                item["saved_at"] = now.isoformat()
+                valid.append(item)
+                continue
+
+            try:
+
+                saved_time = datetime.fromisoformat(
+                    saved_at
+                )
+
+                if saved_time.tzinfo is None:
+                    saved_time = saved_time.replace(
+                        tzinfo=timezone.utc
+                    )
+
+                age = (
+                    now - saved_time
+                ).total_seconds()
+
+                if age < 86400:
+                    valid.append(item)
+
+            except Exception:
+                continue
+
+        if len(valid) != len(data):
+
+            with open(
+                RADAR_MEMORY_FILE,
+                "w",
+                encoding="utf-8"
+            ) as file:
+
+                json.dump(
+                    valid,
+                    file,
+                    indent=2
+                )
+
+        return valid
 
     except Exception:
         return []
@@ -122,7 +176,10 @@ def save_radar_memory(results):
 
             memory.append({
                 "chainId": chain,
-                "tokenAddress": address
+                "tokenAddress": address,
+                "saved_at": datetime.now(
+                    timezone.utc
+                ).isoformat()
             })
 
         old_memory = load_radar_memory()
