@@ -16,6 +16,8 @@ WHITE = "\033[97m"
 GRAY = "\033[90m"
 
 DEX_PROFILES_URL = "https://api.dexscreener.com/token-profiles/latest/v1"
+DEX_BOOSTS_URL = "https://api.dexscreener.com/token-boosts/latest/v1"
+DEX_TOP_BOOSTS_URL = "https://api.dexscreener.com/token-boosts/top/v1"
 DEX_TOKEN_PAIRS_URL = "https://api.dexscreener.com/token-pairs/v1/{chain}/{address}"
 GOPLUS_SOLANA_URL = "https://api.gopluslabs.io/api/v1/solana/token_security/"
 GOPLUS_EVM_URL = "https://api.gopluslabs.io/api/v1/token_security/{chain_id}"
@@ -222,15 +224,56 @@ def get_latest_profiles():
             return []
 
         data = response.json()
+        profiles = data if isinstance(data, list) else []
 
-        if isinstance(data, list):
-            return data
+        try:
+            boost_response = SESSION.get(
+                DEX_BOOSTS_URL,
+                timeout=15
+            )
 
-        return []
+            if boost_response.status_code == 200:
+                boosts = boost_response.json()
+
+                if isinstance(boosts, list):
+                    profiles.extend(boosts)
+
+        except Exception:
+            pass
+
+        try:
+            top_boost_response = SESSION.get(
+                DEX_TOP_BOOSTS_URL,
+                timeout=15
+            )
+
+            if top_boost_response.status_code == 200:
+                top_boosts = top_boost_response.json()
+
+                if isinstance(top_boosts, list):
+                    profiles.extend(top_boosts)
+
+        except Exception:
+            pass
+
+        unique = []
+        seen = set()
+
+        for profile in profiles:
+            chain = profile.get("chainId")
+            address = profile.get("tokenAddress")
+
+            if chain and address:
+                key = (chain.lower(), address.lower())
+
+                if key not in seen:
+                    seen.add(key)
+                    unique.append(profile)
+
+        return unique
 
     except Exception:
         return []
-
 
 def get_token_pairs(chain, address):
 
@@ -340,10 +383,14 @@ def get_token_security(chain, token_address):
         )
 
         if response.status_code != 200:
+            print(f"{GRAY}[GOPLUS] HTTP {response.status_code} for {chain}:{token_address}{RESET}")
             return None
 
         data = response.json()
         result = data.get("result")
+
+        if not result:
+            print(f"{GRAY}[GOPLUS] Empty result for {chain}:{token_address}{RESET}")
 
         if not isinstance(result, dict):
             return None
@@ -1442,6 +1489,14 @@ def scan_new_tokens():
         security = get_token_security(
             chain,
             address
+        )
+
+        if not security:
+            pass
+
+        print(
+            f"{GRAY}[DEBUG] Security: "
+            f"{"OK" if security else "NONE"}{RESET}"
         )
 
         analysis = calculate_analysis(
