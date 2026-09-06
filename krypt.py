@@ -1375,7 +1375,7 @@ def scan_new_tokens():
 
     results = []
 
-    profiles = profiles[:30]
+    profiles = profiles[:100]
 
     print(
         f"{GRAY}[RADAR] Profiles received: "
