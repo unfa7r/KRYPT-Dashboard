@@ -3092,6 +3092,15 @@ def show_buy_explanation(item):
         f"{RESET}"
     )
 
+    pair = item.get("pair") or {}
+
+    print(
+
+        f"  Market Cap: "
+        f"{format_money(pair.get('marketCap') or pair.get('fdv') or 0)}"
+
+    )
+
     print(
 
         f"  Liquidity : "
@@ -3297,6 +3306,221 @@ def show_buy_explanation(item):
 # ============================================================
 # RESULTS
 # ============================================================
+
+def show_coin_details(item):
+
+    analysis = item["analysis"]
+    pair = item.get("pair") or {}
+
+    clear()
+
+    print(f"{CYAN}{BOLD}")
+    print("╔══════════════════════════════════════════════════════════════╗")
+    print("║                       COIN DETAILS                           ║")
+    print("╚══════════════════════════════════════════════════════════════╝")
+    print(RESET)
+
+    print(
+        f"{WHITE}{BOLD}"
+        f"{item['name']}"
+        f"{RESET}"
+    )
+
+    print(f"{GRAY}Chain       : {item['chain']}{RESET}")
+    print(f"{GRAY}Contract    : {item['address']}{RESET}")
+    print(
+        f"{GRAY}Pair Address: "
+        f"{pair.get('pairAddress') or 'UNAVAILABLE'}"
+        f"{RESET}"
+    )
+
+    line()
+
+    print(f"{CYAN}{BOLD}MARKET DATA{RESET}")
+
+    print(
+        f"  Market Cap : "
+        f"{format_money(pair.get('marketCap') or pair.get('fdv') or 0)}"
+    )
+
+    print(
+        f"  Price      : "
+        f"${pair.get('priceUsd') or 'N/A'}"
+    )
+
+    print(
+        f"  Liquidity  : "
+        f"{format_money(analysis['liquidity'])}"
+    )
+
+    print(
+        f"  Volume 24h : "
+        f"{format_money(analysis['volume'])}"
+    )
+
+    print(
+        f"  Volume 5m  : "
+        f"{format_money(analysis['volume_5m'])}"
+    )
+
+    print(
+        f"  5m         : "
+        f"{analysis['price_change_5m']:+.2f}%"
+    )
+
+    print(
+        f"  1h         : "
+        f"{analysis['price_change_1h']:+.2f}%"
+    )
+
+    print(
+        f"  24h        : "
+        f"{analysis['price_change_24h']:+.2f}%"
+    )
+
+    print(
+        f"  Token Age  : "
+        f"{format_age(analysis['age_hours'])}"
+    )
+
+    line()
+
+    print(f"{CYAN}{BOLD}KRYPT INTELLIGENCE{RESET}")
+
+    print(
+        f"  Risk        : "
+        f"{analysis['risk']}%"
+    )
+
+    print(
+        f"  Opportunity : "
+        f"{analysis['opportunity']}/100"
+    )
+
+    print(
+        f"  Confidence  : "
+        f"{analysis['confidence']}%"
+    )
+
+    print(
+        f"  Grow Score  : "
+        f"{analysis['grow_score']}/100"
+    )
+
+    signal = analysis["signal"]
+
+    if signal == "BUY":
+        signal_color = GREEN
+        signal_icon = "🟢"
+    else:
+        signal_color = RED
+        signal_icon = "🔴"
+
+    print(
+        f"  Signal      : "
+        f"{signal_color}"
+        f"{signal_icon} {signal}"
+        f"{RESET}"
+    )
+
+    line()
+
+    forecast = analysis.get("grow_forecast")
+
+    print(f"{YELLOW}{BOLD}GROW FORECAST{RESET}")
+
+    if forecast:
+
+        for horizon in ("1H", "6H", "1D", "1W", "1M"):
+
+            data = forecast.get(horizon)
+
+            if not data:
+                continue
+
+            print(
+                f"  {horizon:<3}: "
+                f"{data['low']:+.1f}% → "
+                f"{data['high']:+.1f}%   "
+                f"C: {data['confidence']}%"
+            )
+
+    else:
+
+        print(
+            f"  {GRAY}"
+            "DATA INSUFFICIENT"
+            f"{RESET}"
+        )
+
+    line()
+
+    whale = analysis["whale"]
+
+    print(f"{CYAN}{BOLD}WHALE{RESET}")
+
+    if whale["available"]:
+
+        print(
+            f"  Holders     : "
+            f"{whale['holder_count']:,}"
+        )
+
+        print(
+            f"  Top Holder  : "
+            f"{whale['top_holder_percent']:.2f}%"
+        )
+
+        print(
+            f"  Top 10      : "
+            f"{whale['top10_percent']:.2f}%"
+        )
+
+        print(
+            f"  Whale Risk  : "
+            f"{whale['risk']}"
+        )
+
+    else:
+
+        print(
+            f"  {RED}"
+            "Whale data unavailable"
+            f"{RESET}"
+        )
+
+    line()
+
+    print(f"{CYAN}{BOLD}SECURITY{RESET}")
+
+    if analysis["security_available"]:
+
+        if analysis["security_safe"]:
+
+            print(
+                f"  {GREEN}"
+                "✓ PASS"
+                f"{RESET}"
+            )
+
+        else:
+
+            print(
+                f"  {RED}"
+                "✗ RISK"
+                f"{RESET}"
+            )
+
+    else:
+
+        print(
+            f"  {RED}"
+            "✗ DATA UNAVAILABLE"
+            f"{RESET}"
+        )
+
+    pause()
+
 
 def show_results(results):
 
@@ -3544,7 +3768,13 @@ def show_results(results):
 
         print(
             f"{CYAN}"
-            "[B] View BUY explanation"
+            "[B] BUY explanation"
+            f"{RESET}"
+        )
+
+        print(
+            f"{CYAN}"
+            "[D] COIN DETAILS"
             f"{RESET}"
         )
 
@@ -3554,11 +3784,143 @@ def show_results(results):
 
         if choice == "b":
 
-            show_buy_explanation(
-                buy_items[0]
+            clear()
+
+            print(f"{CYAN}{BOLD}")
+            print("╔══════════════════════════════════════════════════════════════╗")
+            print("║                     BUY EXPLANATION                          ║")
+            print("╚══════════════════════════════════════════════════════════════╝")
+            print(RESET)
+
+            for i, item in enumerate(buy_items, 1):
+
+                print(
+                    f"{GREEN}[{i:02d}] "
+                    f"{item['name']}"
+                    f"{RESET}"
+                )
+
+            print()
+            print(
+                f"{GRAY}[00] BACK{RESET}"
             )
 
-            return
+            number = input(
+                f"\n{WHITE}BUY coin number: {RESET}"
+            ).strip()
+
+            if number == "00":
+                return
+
+            if number.isdigit():
+
+                index = int(number) - 1
+
+                if 0 <= index < len(buy_items):
+
+                    show_buy_explanation(
+                        buy_items[index]
+                    )
+
+                    return
+
+            print(
+                f"{RED}Invalid BUY coin number.{RESET}"
+            )
+
+            pause()
+
+        elif choice == "d":
+
+            clear()
+
+            print(f"{CYAN}{BOLD}")
+            print("╔══════════════════════════════════════════════════════════════╗")
+            print("║                       COIN DETAILS                           ║")
+            print("╚══════════════════════════════════════════════════════════════╝")
+            print(RESET)
+
+            for i, item in enumerate(results[:10], 1):
+
+                print(
+                    f"{WHITE}[{i:02d}] "
+                    f"{item['name']}"
+                    f"{RESET}"
+                )
+
+            print()
+            print(
+                f"{GRAY}[00] BACK{RESET}"
+            )
+
+            number = input(
+                f"\n{WHITE}Coin number: {RESET}"
+            ).strip()
+
+            if number == "00":
+                return
+
+            if number.isdigit():
+
+                index = int(number) - 1
+
+                if 0 <= index < min(
+                    len(results),
+                    10
+                ):
+
+                    show_coin_details(
+                        results[index]
+                    )
+
+                    return
+
+            print(
+                f"{RED}Invalid coin number.{RESET}"
+            )
+
+            pause()
+
+    else:
+
+        print()
+
+        print(
+            f"{CYAN}"
+            "[D] COIN DETAILS"
+            f"{RESET}"
+        )
+
+        choice = input(
+            f"\n{WHITE}Selection: {RESET}"
+        ).strip().lower()
+
+        if choice == "d":
+
+            number = input(
+                f"{WHITE}Coin number: {RESET}"
+            ).strip()
+
+            if number.isdigit():
+
+                index = int(number) - 1
+
+                if 0 <= index < min(
+                    len(results),
+                    10
+                ):
+
+                    show_coin_details(
+                        results[index]
+                    )
+
+                    return
+
+            print(
+                f"{RED}Invalid coin number.{RESET}"
+            )
+
+            pause()
 
     pause()
 
@@ -3989,6 +4351,11 @@ def buy_position():
         "name": item["name"],
         "invested_usd": invested,
         "entry_price": price,
+        "entry_market_cap": float(
+            item["pair"].get("marketCap")
+            or item["pair"].get("fdv")
+            or 0
+        ),
         "amount": amount,
         "bought_at": datetime.now(timezone.utc).isoformat()
     })
@@ -4048,6 +4415,12 @@ def view_positions():
             pair.get("priceUsd") or 0
         )
 
+        current_market_cap = float(
+            pair.get("marketCap")
+            or pair.get("fdv")
+            or 0
+        )
+
         invested = float(
             position.get("invested_usd") or 0
         )
@@ -4097,6 +4470,20 @@ def view_positions():
         print(
             f"    Current  : "
             f"${current_price:.12g}"
+        )
+
+        entry_market_cap = float(
+            position.get("entry_market_cap") or 0
+        )
+
+        print(
+            f"    Entry MC : "
+            f"{format_money(entry_market_cap)}"
+        )
+
+        print(
+            f"    Current MC: "
+            f"{format_money(current_market_cap)}"
         )
 
         print(
