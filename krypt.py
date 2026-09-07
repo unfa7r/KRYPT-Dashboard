@@ -73,7 +73,306 @@ SESSION.headers.update({
 RADAR_MEMORY_FILE = "krypt_radar_memory.json"
 POSITIONS_FILE = "krypt_positions.json"
 NOTES_FILE = "krypt_notes.json"
+FORECAST_MEMORY_FILE = "krypt_forecast_memory.json"
+
+def save_forecast_memory(record):
+    try:
+        memory = []
+
+        if os.path.exists(FORECAST_MEMORY_FILE):
+            with open(FORECAST_MEMORY_FILE, "r", encoding="utf-8") as f:
+                data = json.load(f)
+                if isinstance(data, list):
+                    memory = data
+
+        memory.append(record)
+
+        with open(FORECAST_MEMORY_FILE, "w", encoding="utf-8") as f:
+            json.dump(memory, f, indent=2)
+
+    except Exception:
+        pass
 MAX_MEMORY_TOKENS = 20
+
+
+
+def classify_forecast_outcome(actual_change, forecast):
+
+    low = safe_float(forecast.get("low"))
+    high = safe_float(forecast.get("high"))
+
+    if high < low:
+        low, high = high, low
+
+    if low >= 0:
+        expected_direction = "UP"
+    elif high <= 0:
+        expected_direction = "DOWN"
+    else:
+        expected_direction = "MIXED"
+
+    if actual_change > 0:
+        actual_direction = "UP"
+    elif actual_change < 0:
+        actual_direction = "DOWN"
+    else:
+        actual_direction = "FLAT"
+
+    direction_hit = (
+        expected_direction == "MIXED"
+        or expected_direction == actual_direction
+    )
+
+    range_hit = (
+        low <= actual_change <= high
+    )
+
+    return {
+        "expected_direction": expected_direction,
+        "actual_direction": actual_direction,
+        "direction_hit": direction_hit,
+        "range_hit": range_hit
+    }
+
+
+def evaluate_forecast_record(record):
+    try:
+        saved_at = datetime.fromisoformat(
+            record["saved_at"]
+        )
+
+        now = datetime.now(timezone.utc)
+
+        horizons = {
+            "1H": 1,
+            "6H": 6,
+            "1D": 24,
+            "1W": 24 * 7,
+            "1M": 24 * 30
+        }
+
+        forecasts = record.get("forecasts", {})
+
+        for horizon, hours in horizons.items():
+
+            forecast = forecasts.get(horizon)
+
+            if not forecast:
+                continue
+
+            evaluated_key = f"evaluated_{horizon}"
+
+            if record.get(evaluated_key):
+                continue
+
+            age_hours = (
+                now - saved_at
+            ).total_seconds() / 3600
+
+            if age_hours < hours:
+                continue
+
+            chain = record.get("chainId")
+            address = record.get("tokenAddress")
+
+            if not chain or not address:
+                continue
+
+            pairs = get_token_pairs(
+                chain,
+                address
+            )
+
+            pair = choose_best_pair(pairs)
+
+            if not pair:
+                continue
+
+            current_price = safe_float(
+                pair.get("priceUsd")
+            )
+
+            start_price = safe_float(
+                record.get("price")
+            )
+
+            if current_price <= 0 or start_price <= 0:
+                continue
+
+            actual_change = (
+                (current_price - start_price)
+                / start_price
+            ) * 100
+
+            low = safe_float(
+                forecast.get("low")
+            )
+
+            high = safe_float(
+                forecast.get("high")
+            )
+
+            outcome = classify_forecast_outcome(
+                actual_change,
+                forecast
+            )
+
+            hit = outcome["range_hit"]
+
+            record[evaluated_key] = True
+            record[f"actual_{horizon}"] = round(
+                actual_change,
+                2
+            )
+            record[f"hit_{horizon}"] = hit
+            record[f"direction_hit_{horizon}"] = (
+                outcome["direction_hit"]
+            )
+            record[f"expected_direction_{horizon}"] = (
+                outcome["expected_direction"]
+            )
+            record[f"actual_direction_{horizon}"] = (
+                outcome["actual_direction"]
+            )
+            record[f"evaluated_at_{horizon}"] = (
+                now.isoformat()
+            )
+
+        return record
+
+    except Exception:
+        return record
+
+
+def evaluate_forecast_memory():
+    try:
+        if not os.path.exists(
+            FORECAST_MEMORY_FILE
+        ):
+            return 0
+
+        with open(
+            FORECAST_MEMORY_FILE,
+            "r",
+            encoding="utf-8"
+        ) as f:
+            memory = json.load(f)
+
+        if not isinstance(memory, list):
+            return 0
+
+        evaluated_count = 0
+
+        for index, record in enumerate(memory):
+
+            if not isinstance(record, dict):
+                continue
+
+            before = dict(record)
+
+            memory[index] = (
+                evaluate_forecast_record(record)
+            )
+
+            if memory[index] != before:
+                evaluated_count += 1
+
+        with open(
+            FORECAST_MEMORY_FILE,
+            "w",
+            encoding="utf-8"
+        ) as f:
+            json.dump(
+                memory,
+                f,
+                indent=2
+            )
+
+        return evaluated_count
+
+    except Exception:
+        return 0
+
+def calculate_forecast_accuracy():
+    try:
+        if not os.path.exists(
+            FORECAST_MEMORY_FILE
+        ):
+            return {}
+
+        with open(
+            FORECAST_MEMORY_FILE,
+            "r",
+            encoding="utf-8"
+        ) as f:
+            memory = json.load(f)
+
+        if not isinstance(memory, list):
+            return {}
+
+        horizons = (
+            "1H",
+            "6H",
+            "1D",
+            "1W",
+            "1M"
+        )
+
+        accuracy = {}
+
+        for horizon in horizons:
+
+            evaluated = [
+                record
+                for record in memory
+                if isinstance(record, dict)
+                and record.get(
+                    f"evaluated_{horizon}"
+                )
+            ]
+
+            if not evaluated:
+                accuracy[horizon] = {
+                    "samples": 0,
+                    "direction_accuracy": None,
+                    "range_accuracy": None
+                }
+                continue
+
+            direction_hits = sum(
+                1
+                for record in evaluated
+                if record.get(
+                    f"direction_hit_{horizon}"
+                )
+            )
+
+            range_hits = sum(
+                1
+                for record in evaluated
+                if record.get(
+                    f"hit_{horizon}"
+                )
+            )
+
+            total = len(evaluated)
+
+            accuracy[horizon] = {
+                "samples": total,
+                "direction_accuracy": round(
+                    direction_hits / total * 100,
+                    2
+                ),
+                "range_accuracy": round(
+                    range_hits / total * 100,
+                    2
+                )
+            }
+
+        return accuracy
+
+    except Exception:
+        return {}
 
 
 def load_positions():
@@ -1658,6 +1957,66 @@ def calculate_grow_score(
     return max(0, min(round(score), 100))
 
 
+def calculate_direction_signal(
+    price_change_5m,
+    price_change_1h,
+    price_change_24h,
+    buy_ratio_5m,
+    buy_ratio_1h,
+    volume,
+    liquidity
+):
+
+    score = 0
+
+    if price_change_5m > 0:
+        score += 15
+    elif price_change_5m < 0:
+        score -= 15
+
+    if price_change_1h > 0:
+        score += 25
+    elif price_change_1h < 0:
+        score -= 25
+
+    if price_change_24h > 0:
+        score += 15
+    elif price_change_24h < 0:
+        score -= 15
+
+    if buy_ratio_5m >= 0.55:
+        score += 15
+    elif buy_ratio_5m < 0.45:
+        score -= 15
+
+    if buy_ratio_1h >= 0.55:
+        score += 15
+    elif buy_ratio_1h < 0.45:
+        score -= 15
+
+    if volume >= 100000:
+        score += 5
+
+    if liquidity >= 50000:
+        score += 5
+
+    score = max(-100, min(score, 100))
+
+    if score >= 25:
+        direction = "UP"
+    elif score <= -25:
+        direction = "DOWN"
+    else:
+        direction = "MIXED"
+
+    confidence = round(abs(score))
+
+    return {
+        "direction": direction,
+        "score": score,
+        "confidence": confidence
+    }
+
 def calculate_grow_forecast(
     grow_score,
     price_change_5m,
@@ -2432,6 +2791,50 @@ def calculate_analysis(pair, security):
         + confidence * 0.15
 
     )
+
+    if grow_forecast:
+        try:
+            forecast_saved_at = datetime.now(timezone.utc).isoformat()
+
+            save_forecast_memory({
+                "forecast_id": (
+                    f"{pair.get('chainId', 'unknown')}_"
+                    f"{pair.get('baseToken', {}).get('address', 'unknown')}_"
+                    f"{forecast_saved_at}"
+                ),
+                "saved_at": forecast_saved_at,
+                "evaluated": False,
+                "chainId": pair.get("chainId"),
+                "tokenAddress": (
+                    pair.get("baseToken", {}).get("address")
+                    if isinstance(pair.get("baseToken"), dict)
+                    else None
+                ),
+                "symbol": (
+                    pair.get("baseToken", {}).get("symbol")
+                    if isinstance(pair.get("baseToken"), dict)
+                    else None
+                ),
+                "price": safe_float(pair.get("priceUsd")),
+                "market_cap": safe_float(
+                    pair.get("marketCap") or pair.get("fdv")
+                ),
+                "liquidity": liquidity,
+                "volume": volume,
+                "price_change_5m": price_change_5m,
+                "price_change_1h": price_change_1h,
+                "price_change_24h": price_change_24h,
+                "buy_ratio_5m": buy_ratio_5m,
+                "buy_ratio_1h": buy_ratio_1h,
+                "total_5m": total_5m,
+                "total_1h": total_1h,
+                "age_hours": age_hours,
+
+                "grow_score": grow_score,
+                "forecasts": grow_forecast
+            })
+        except Exception:
+            pass
 
     return {
 
@@ -4779,6 +5182,11 @@ def dashboard():
 def main():
 
     boot_animation()
+
+    try:
+        evaluate_forecast_memory()
+    except Exception:
+        pass
 
     dashboard()
 
