@@ -14,5 +14,5 @@ cd KRYPT-Dashboard
 
 ./install.sh
 
-Çalıştır
+## Çalıştır
 python krypt.py
