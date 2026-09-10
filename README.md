@@ -1,4 +1,4 @@
-KRYPT Dashboard
+# KRYPT Dashboard
 
 ## Kurulum
 
