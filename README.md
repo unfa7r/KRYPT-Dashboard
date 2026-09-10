@@ -12,7 +12,7 @@ git clone https://github.com/unfa7r/KRYPT-Dashboard.git
 
 cd KRYPT-Dashboard
 
-./install.sh
+bash install.sh
 
 ## Çalıştır
 python krypt.py
