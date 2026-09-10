@@ -3,6 +3,7 @@ import sys
 import time
 import requests
 import json
+import threading
 from datetime import datetime, timezone
 
 RESET = "\033[0m"
@@ -135,7 +136,7 @@ def classify_forecast_outcome(actual_change, forecast):
     }
 
 
-def evaluate_forecast_record(record):
+def evaluate_forecast_record(record, target_horizon=None):
     try:
         saved_at = datetime.fromisoformat(
             record["saved_at"]
@@ -153,7 +154,15 @@ def evaluate_forecast_record(record):
 
         forecasts = record.get("forecasts", {})
 
-        for horizon, hours in horizons.items():
+        selected_horizons = (
+            [target_horizon]
+            if target_horizon in horizons
+            else list(horizons.keys())
+        )
+
+        for horizon in selected_horizons:
+
+            hours = horizons[horizon]
 
             forecast = forecasts.get(horizon)
 
@@ -204,36 +213,62 @@ def evaluate_forecast_record(record):
                 / start_price
             ) * 100
 
-            low = safe_float(
-                forecast.get("low")
-            )
-
-            high = safe_float(
-                forecast.get("high")
-            )
-
             outcome = classify_forecast_outcome(
                 actual_change,
                 forecast
             )
 
-            hit = outcome["range_hit"]
+            direction_signal = record.get(
+                "direction_signal",
+                {}
+            )
+
+            recorded_direction = (
+                direction_signal.get("direction")
+                if isinstance(direction_signal, dict)
+                else None
+            )
+
+            if recorded_direction in (
+                "UP",
+                "DOWN",
+                "MIXED"
+            ):
+                outcome["expected_direction"] = (
+                    recorded_direction
+                )
+
+                if recorded_direction == "MIXED":
+                    outcome["direction_hit"] = False
+                else:
+                    outcome["direction_hit"] = (
+                        recorded_direction
+                        == outcome["actual_direction"]
+                    )
 
             record[evaluated_key] = True
+
             record[f"actual_{horizon}"] = round(
                 actual_change,
                 2
             )
-            record[f"hit_{horizon}"] = hit
+
+            record[f"hit_{horizon}"] = (
+                outcome["range_hit"]
+            )
+
             record[f"direction_hit_{horizon}"] = (
                 outcome["direction_hit"]
             )
+
             record[f"expected_direction_{horizon}"] = (
                 outcome["expected_direction"]
             )
+
             record[f"actual_direction_{horizon}"] = (
                 outcome["actual_direction"]
             )
+
             record[f"evaluated_at_{horizon}"] = (
                 now.isoformat()
             )
@@ -243,8 +278,7 @@ def evaluate_forecast_record(record):
     except Exception:
         return record
 
-
-def evaluate_forecast_memory():
+def evaluate_forecast_memory(target_horizon=None):
     try:
         if not os.path.exists(
             FORECAST_MEMORY_FILE
@@ -261,6 +295,20 @@ def evaluate_forecast_memory():
         if not isinstance(memory, list):
             return 0
 
+        valid_horizons = {
+            "1H",
+            "6H",
+            "1D",
+            "1W",
+            "1M"
+        }
+
+        if (
+            target_horizon is not None
+            and target_horizon not in valid_horizons
+        ):
+            return 0
+
         evaluated_count = 0
 
         for index, record in enumerate(memory):
@@ -270,8 +318,9 @@ def evaluate_forecast_memory():
 
             before = dict(record)
 
-            memory[index] = (
-                evaluate_forecast_record(record)
+            memory[index] = evaluate_forecast_record(
+                record,
+                target_horizon=target_horizon
             )
 
             if memory[index] != before:
@@ -374,6 +423,81 @@ def calculate_forecast_accuracy():
     except Exception:
         return {}
 
+
+
+def calculate_v4_forward_accuracy():
+    """
+    KRYPT Direction V4 forward-test accuracy.
+
+    Only evaluates records explicitly tagged as V4.
+    Historical/non-V4 records are excluded.
+    """
+
+    try:
+        if not os.path.exists(FORECAST_MEMORY_FILE):
+            return {}
+
+        with open(
+            FORECAST_MEMORY_FILE,
+            "r",
+            encoding="utf-8"
+        ) as f:
+            memory = json.load(f)
+
+        if not isinstance(memory, list):
+            return {}
+
+        horizons = (
+            "1H",
+            "6H",
+            "1D",
+            "1W",
+            "1M"
+        )
+
+        result = {}
+
+        for horizon in horizons:
+
+            evaluated = [
+                record
+                for record in memory
+                if isinstance(record, dict)
+                and record.get("direction_engine") == "V4"
+                and record.get(
+                    f"evaluated_{horizon}"
+                )
+            ]
+
+            if not evaluated:
+                result[horizon] = {
+                    "samples": 0,
+                    "direction_accuracy": None
+                }
+                continue
+
+            direction_hits = sum(
+                1
+                for record in evaluated
+                if record.get(
+                    f"direction_hit_{horizon}"
+                )
+            )
+
+            total = len(evaluated)
+
+            result[horizon] = {
+                "samples": total,
+                "direction_accuracy": round(
+                    direction_hits / total * 100,
+                    2
+                )
+            }
+
+        return result
+
+    except Exception:
+        return {}
 
 def load_positions():
     if not os.path.exists(POSITIONS_FILE):
@@ -971,68 +1095,6 @@ def get_latest_profiles():
         except Exception:
             pass
 
-        # Expand discovery with DexScreener search.
-        # Search is used only to discover additional candidates;
-        # existing BUY / RISK logic remains unchanged.
-        search_terms = [
-            "pump",
-            "ai",
-            "cat",
-            "dog",
-            "meme",
-            "swap"
-        ]
-
-        for term in search_terms:
-
-            try:
-                search_response = SESSION.get(
-                    "https://api.dexscreener.com/latest/dex/search",
-                    params={"q": term},
-                    timeout=15
-                )
-
-                if search_response.status_code != 200:
-                    continue
-
-                pairs = search_response.json().get(
-                    "pairs",
-                    []
-                )
-
-                if not isinstance(pairs, list):
-                    continue
-
-                for pair in pairs:
-
-                    if not isinstance(pair, dict):
-                        continue
-
-                    chain = pair.get("chainId")
-                    base_token = pair.get(
-                        "baseToken",
-                        {}
-                    )
-
-                    address = (
-                        base_token.get("address")
-                        if isinstance(base_token, dict)
-                        else None
-                    )
-
-                    if chain and address:
-                        profiles.append({
-                            "chainId": chain,
-                            "tokenAddress": address,
-                            "description": base_token.get(
-                                "name",
-                                ""
-                            )
-                        })
-
-            except Exception:
-                pass
-
         # Re-add recently strong BUY candidates.
         try:
             memory = load_radar_memory()
@@ -1044,19 +1106,29 @@ def get_latest_profiles():
         except Exception:
             pass
 
+        # Deduplicate by token contract first.
+        # The same symbol may legitimately exist on different contracts,
+        # so symbol alone is not enough for identity.
         unique = []
-        seen = set()
+        seen_contracts = set()
 
         for profile in profiles:
             chain = profile.get("chainId")
             address = profile.get("tokenAddress")
 
-            if chain and address:
-                key = (chain.lower(), address.lower())
+            if not chain or not address:
+                continue
 
-                if key not in seen:
-                    seen.add(key)
-                    unique.append(profile)
+            key = (
+                str(chain).lower(),
+                str(address).lower()
+            )
+
+            if key in seen_contracts:
+                continue
+
+            seen_contracts.add(key)
+            unique.append(profile)
 
         return unique
 
@@ -1094,8 +1166,79 @@ def get_token_pairs(chain, address):
         return []
 
 
-def choose_best_pair(pairs):
+def calculate_pair_quality(pair):
+    """
+    Rank individual trading pairs by market quality.
+    This does not create BUY signals.
+    """
 
+    if not isinstance(pair, dict):
+        return 0
+
+    liquidity = safe_float(
+        (pair.get("liquidity") or {}).get("usd")
+    )
+
+    volume = safe_float(
+        (pair.get("volume") or {}).get("h24")
+    )
+
+    volume_5m = safe_float(
+        (pair.get("volume") or {}).get("m5")
+    )
+
+    txns = pair.get("txns") or {}
+    txns_5m = txns.get("m5") or {}
+
+    buys_5m = safe_int(txns_5m.get("buys"))
+    sells_5m = safe_int(txns_5m.get("sells"))
+
+    total_txns_5m = buys_5m + sells_5m
+
+    score = 0
+
+    if liquidity >= 500000:
+        score += 30
+    elif liquidity >= 100000:
+        score += 25
+    elif liquidity >= 50000:
+        score += 18
+    elif liquidity >= MIN_LIQUIDITY:
+        score += 10
+    else:
+        score -= 15
+
+    if volume >= 5000000:
+        score += 25
+    elif volume >= 1000000:
+        score += 20
+    elif volume >= 100000:
+        score += 14
+    elif volume >= MIN_VOLUME:
+        score += 7
+    else:
+        score -= 10
+
+    if volume_5m >= 100000:
+        score += 20
+    elif volume_5m >= 10000:
+        score += 14
+    elif volume_5m >= 1000:
+        score += 7
+
+    if total_txns_5m >= 500:
+        score += 15
+    elif total_txns_5m >= 200:
+        score += 10
+    elif total_txns_5m >= 50:
+        score += 6
+    elif total_txns_5m >= 10:
+        score += 3
+
+    return max(0, min(score, 100))
+
+
+def choose_best_pair(pairs):
     if not pairs:
         return None
 
@@ -1109,8 +1252,11 @@ def choose_best_pair(pairs):
 
     return max(
         valid,
-        key=lambda p: safe_float(
-            (p.get("liquidity") or {}).get("usd")
+        key=lambda p: (
+            calculate_pair_quality(p),
+            safe_float(
+                (p.get("liquidity") or {}).get("usd")
+            )
         )
     )
 
@@ -1966,56 +2112,234 @@ def calculate_direction_signal(
     volume,
     liquidity
 ):
+    """
+    KRYPT Direction V4
+
+    Historical reversal-first direction model.
+    Positive recent momentum is treated as potential exhaustion
+    rather than automatic bullish continuation.
+
+    This signal is directional context only.
+    It does not create a BUY signal.
+    """
 
     score = 0
 
-    if price_change_5m > 0:
-        score += 15
-    elif price_change_5m < 0:
-        score -= 15
-
-    if price_change_1h > 0:
-        score += 25
-    elif price_change_1h < 0:
+    # 1H HISTORICAL REVERSAL BIAS
+    if price_change_1h > 100:
+        score -= 70
+    elif price_change_1h > 50:
+        score -= 55
+    elif price_change_1h > 25:
+        score -= 60
+    elif price_change_1h > 10:
+        score -= 58
+    elif price_change_1h > 0:
+        score -= 50
+    elif price_change_1h > -20:
         score -= 25
+    elif price_change_1h > -50:
+        score += 0
+    else:
+        score -= 20
 
-    if price_change_24h > 0:
-        score += 15
-    elif price_change_24h < 0:
+    # 5M MOMENTUM
+    if price_change_5m >= 20:
         score -= 15
+    elif price_change_5m >= 10:
+        score -= 10
+    elif price_change_5m >= 5:
+        score -= 5
+    elif price_change_5m <= -10:
+        score += 8
+    elif price_change_5m <= -5:
+        score += 4
 
-    if buy_ratio_5m >= 0.55:
-        score += 15
-    elif buy_ratio_5m < 0.45:
+    # 24H CONTEXT
+    if price_change_24h >= 300:
         score -= 15
-
-    if buy_ratio_1h >= 0.55:
-        score += 15
-    elif buy_ratio_1h < 0.45:
-        score -= 15
-
-    if volume >= 100000:
+    elif price_change_24h >= 100:
+        score -= 10
+    elif price_change_24h >= 50:
+        score -= 5
+    elif price_change_24h <= -50:
         score += 5
 
-    if liquidity >= 50000:
+    # BUY FLOW
+    if buy_ratio_5m >= 0.70:
         score += 5
+    elif buy_ratio_5m >= 0.60:
+        score += 3
+    elif buy_ratio_5m < 0.40:
+        score -= 5
+
+    if buy_ratio_1h >= 0.65:
+        score += 5
+    elif buy_ratio_1h >= 0.55:
+        score += 2
+    elif buy_ratio_1h < 0.40:
+        score -= 5
+
+    # MARKET QUALITY
+    if volume >= 1_000_000:
+        score += 3
+    elif volume < 5_000:
+        score -= 3
+
+    if liquidity >= 500_000:
+        score += 3
+    elif liquidity < 10_000:
+        score -= 3
 
     score = max(-100, min(score, 100))
 
-    if score >= 25:
-        direction = "UP"
-    elif score <= -25:
+    # V4 is intentionally selective.
+    # Historical testing strongly supports DOWN in the
+    # positive 1H momentum region. UP is not yet sufficiently
+    # validated, so uncertain cases remain MIXED.
+    if score <= -40:
         direction = "DOWN"
+    elif score >= 40:
+        direction = "UP"
     else:
         direction = "MIXED"
 
-    confidence = round(abs(score))
+    # V5 MIXED reversal rule.
+    # Forward-test result: MIXED + 24H <= -20% -> DOWN
+    # 34 samples: 31 DOWN / 3 UP = 91.18% DOWN.
+    if direction == "MIXED" and price_change_24h <= -20:
+        direction = "DOWN"
+
+    # Historical confidence calibration.
+    # Based on 679 evaluated 1H samples.
+    if direction == "DOWN":
+        if score <= -70:
+            confidence = 94
+        elif score <= -60:
+            confidence = 83
+        elif score <= -50:
+            confidence = 86
+        elif score <= -40:
+            confidence = 77
+        else:
+            confidence = 68
+    else:
+        confidence = min(95, round(abs(score)))
+
 
     return {
         "direction": direction,
         "score": score,
         "confidence": confidence
     }
+
+
+def calculate_grow_forecast_v4(
+    grow_score,
+    price_change_5m,
+    price_change_1h,
+    price_change_24h,
+    volume,
+    liquidity,
+    buy_ratio_5m,
+    buy_ratio_1h,
+    age_hours
+):
+    """
+    GROW FORECAST ENGINE V4 — experimental.
+
+    V4 is regime-first.
+    It does not use Grow Score as a direct growth multiplier.
+
+    Current validated candidate:
+        1H:  -50% <= 1H < -20%
+        5M:    0% <= 5M < +10%
+        24H:   0% <= 24H < +100%
+        Liquidity >= $100K
+        Volume >= $1M
+
+    Base forecast:
+        -2% -> +12%
+
+    Extreme upside is kept separate from the base range.
+    This function is experimental and is NOT a BUY signal.
+    """
+
+    try:
+        p5 = float(price_change_5m or 0)
+        p1 = float(price_change_1h or 0)
+        p24 = float(price_change_24h or 0)
+        vol = float(volume or 0)
+        liq = float(liquidity or 0)
+
+        recovery = (
+            -50 <= p1 < -20
+            and 0 <= p5 < 10
+            and 0 <= p24 < 100
+        )
+
+        quality = (
+            liq >= 100_000
+            and vol >= 1_000_000
+        )
+
+        forecasts = {
+            "1H": {
+                "low": 0.0,
+                "high": 0.0,
+                "confidence": 20
+            },
+            "6H": {
+                "low": 0.0,
+                "high": 0.0,
+                "confidence": 20
+            },
+            "1D": {
+                "low": 0.0,
+                "high": 0.0,
+                "confidence": 15
+            },
+            "1W": {
+                "low": 0.0,
+                "high": 0.0,
+                "confidence": 10
+            },
+            "1M": {
+                "low": 0.0,
+                "high": 0.0,
+                "confidence": 10
+            }
+        }
+
+        if recovery and quality:
+
+            # Validated 1H base candidate.
+            forecasts["1H"] = {
+                "low": -2.0,
+                "high": 12.0,
+                "confidence": 60
+            }
+
+            # 6H currently has insufficient independent
+            # validation, therefore keep it conservative.
+            forecasts["6H"] = {
+                "low": -15.0,
+                "high": 15.0,
+                "confidence": 35
+            }
+
+            # 1D currently has insufficient data.
+            forecasts["1D"] = {
+                "low": -25.0,
+                "high": 25.0,
+                "confidence": 20
+            }
+
+        return forecasts
+
+    except Exception:
+        return None
+
 
 def calculate_grow_forecast(
     grow_score,
@@ -2282,6 +2606,16 @@ def calculate_analysis(pair, security):
     price_change_5m = safe_float(
         (pair.get("priceChange") or {}).get("m5")
     )
+
+    txns = pair.get("txns") or {}
+
+    txns_5m = txns.get("m5") or {}
+
+    buys_5m = safe_int(txns_5m.get("buys"))
+
+    sells_5m = safe_int(txns_5m.get("sells"))
+
+    total_txns_5m = buys_5m + sells_5m
 
     price_change_1h = safe_float(
         (pair.get("priceChange") or {}).get("h1")
@@ -2735,6 +3069,28 @@ def calculate_analysis(pair, security):
         age_hours
     )
 
+    grow_forecast_v4 = calculate_grow_forecast_v4(
+        grow_score,
+        price_change_5m,
+        price_change_1h,
+        price_change_24h,
+        volume,
+        liquidity,
+        buy_ratio_5m,
+        buy_ratio_1h,
+        age_hours
+    )
+
+    direction_signal = calculate_direction_signal(
+        price_change_5m,
+        price_change_1h,
+        price_change_24h,
+        buy_ratio_5m,
+        buy_ratio_1h,
+        volume,
+        liquidity
+    )
+
     # ========================================================
     # CRITICAL BUY GATE
     # ========================================================
@@ -2821,6 +3177,7 @@ def calculate_analysis(pair, security):
                 ),
                 "liquidity": liquidity,
                 "volume": volume,
+                "volume_5m": volume_5m,
                 "price_change_5m": price_change_5m,
                 "price_change_1h": price_change_1h,
                 "price_change_24h": price_change_24h,
@@ -2831,7 +3188,10 @@ def calculate_analysis(pair, security):
                 "age_hours": age_hours,
 
                 "grow_score": grow_score,
-                "forecasts": grow_forecast
+                "direction_signal": direction_signal,
+                "direction_engine": "V4",
+                "forecasts": grow_forecast,
+                "forecasts_v4": grow_forecast_v4
             })
         except Exception:
             pass
@@ -2851,6 +3211,7 @@ def calculate_analysis(pair, security):
 
         "grow_score": grow_score,
         "grow_forecast": grow_forecast,
+        "direction_signal": direction_signal,
         "signal": signal,
 
         "whale_risk": whale["risk"],
@@ -2860,6 +3221,7 @@ def calculate_analysis(pair, security):
         "liquidity": liquidity,
 
         "volume": volume,
+                "volume_5m": volume_5m,
 
         "volume_5m": volume_5m,
 
@@ -2979,6 +3341,7 @@ def scan_memory_tokens():
             security
         )
 
+        discovery_quality = calculate_discovery_quality(pair)
         base_token = pair.get("baseToken") or {}
 
         symbol = base_token.get("symbol") or "UNKNOWN"
@@ -2990,12 +3353,58 @@ def scan_memory_tokens():
             "chain": chain,
             "address": address,
             "pair": pair,
+            "discovery_quality": discovery_quality,
             "analysis": analysis
         })
+
+    # Remove duplicate token symbols.
+    # Keep the strongest market-quality candidate for each symbol.
+    unique_results = {}
+
+    for item in results:
+        symbol_key = str(
+            item.get("symbol") or "UNKNOWN"
+        ).strip().lower()
+
+        if symbol_key not in unique_results:
+            unique_results[symbol_key] = item
+            continue
+
+        current = unique_results[symbol_key]
+
+        current_quality = current.get(
+            "discovery_quality", 0
+        )
+        new_quality = item.get(
+            "discovery_quality", 0
+        )
+
+        if new_quality > current_quality:
+            unique_results[symbol_key] = item
+        elif new_quality == current_quality:
+            current_liquidity = safe_float(
+                (current.get("pair") or {})
+                .get("liquidity", {})
+                .get("usd")
+            )
+            new_liquidity = safe_float(
+                (item.get("pair") or {})
+                .get("liquidity", {})
+                .get("usd")
+            )
+
+            if new_liquidity > current_liquidity:
+                unique_results[symbol_key] = item
+
+    results = list(unique_results.values())
 
     results.sort(
         key=lambda x: (
             x["analysis"]["risk"] <= MAX_BUY_RISK,
+            (
+                0.35 * x.get("discovery_quality", 0)
+                + 0.65 * x["analysis"]["krypt_score"]
+            ),
             x["analysis"]["opportunity"],
             x["analysis"]["confidence"],
             x["analysis"]["krypt_score"]
@@ -3005,6 +3414,190 @@ def scan_memory_tokens():
 
     return results
 
+
+def calculate_discovery_quality(pair):
+    """
+    Discovery V3.1
+    Rank discovery candidates by market quality.
+    This is a ranking/context score, not a BUY signal.
+    """
+
+    if not isinstance(pair, dict):
+        return 0
+
+    liquidity = safe_float(
+        (pair.get("liquidity") or {}).get("usd")
+    )
+
+    volume = safe_float(
+        (pair.get("volume") or {}).get("h24")
+    )
+
+    volume_5m = safe_float(
+        (pair.get("volume") or {}).get("m5")
+    )
+
+    price_change_5m = safe_float(
+        (pair.get("priceChange") or {}).get("m5")
+    )
+
+    price_change_1h = safe_float(
+        (pair.get("priceChange") or {}).get("h1")
+    )
+
+    txns = pair.get("txns") or {}
+    txns_5m = txns.get("m5") or {}
+
+    buys_5m = safe_int(txns_5m.get("buys"))
+    sells_5m = safe_int(txns_5m.get("sells"))
+
+    total_txns_5m = buys_5m + sells_5m
+
+    buy_ratio_5m = (
+        buys_5m / total_txns_5m
+        if total_txns_5m > 0
+        else 0
+    )
+
+    volume_liquidity_ratio = (
+        volume / liquidity
+        if liquidity > 0
+        else 0
+    )
+
+    age_hours = 0
+
+    try:
+        created_at = pair.get("pairCreatedAt")
+
+        if created_at:
+            created_ms = float(created_at)
+
+            if created_ms > 100000000000:
+                created_ms /= 1000
+
+            age_hours = max(
+                0,
+                (time.time() - created_ms) / 3600
+            )
+
+    except Exception:
+        age_hours = 0
+
+    score = 0
+
+    # Liquidity quality /20
+    if liquidity >= 500000:
+        score += 20
+    elif liquidity >= 250000:
+        score += 18
+    elif liquidity >= 100000:
+        score += 15
+    elif liquidity >= 50000:
+        score += 11
+    elif liquidity >= 20000:
+        score += 6
+    elif liquidity >= MIN_LIQUIDITY:
+        score += 3
+
+    # Volume quality /15
+    if volume >= 5000000:
+        score += 15
+    elif volume >= 1000000:
+        score += 12
+    elif volume >= 500000:
+        score += 9
+    elif volume >= 100000:
+        score += 6
+    elif volume >= 50000:
+        score += 3
+
+    # 5m activity /15
+    if volume_5m >= 100000:
+        score += 15
+    elif volume_5m >= 50000:
+        score += 12
+    elif volume_5m >= 10000:
+        score += 9
+    elif volume_5m >= 5000:
+        score += 6
+    elif volume_5m >= 1000:
+        score += 3
+
+    # Transactions + buy/sell balance /10
+    if total_txns_5m >= 500:
+        score += 7
+    elif total_txns_5m >= 200:
+        score += 5
+    elif total_txns_5m >= 50:
+        score += 3
+    elif total_txns_5m >= 10:
+        score += 1
+
+    if total_txns_5m > 0:
+        if buy_ratio_5m >= 0.65:
+            score += 3
+        elif buy_ratio_5m >= 0.55:
+            score += 2
+        elif buy_ratio_5m >= 0.45:
+            score += 1
+        elif buy_ratio_5m < 0.35:
+            score -= 3
+
+    # Momentum /15
+    if 2 <= price_change_1h <= 20:
+        score += 8
+    elif 20 < price_change_1h <= 50:
+        score += 7
+    elif 50 < price_change_1h <= 100:
+        score += 5
+    elif price_change_1h > 100:
+        score += 1
+    elif price_change_1h < -30:
+        score -= 5
+
+    if -5 <= price_change_5m <= 8:
+        score += 7
+    elif 8 < price_change_5m <= 15:
+        score += 5
+    elif 15 < price_change_5m <= 25:
+        score += 3
+    elif 25 < price_change_5m <= 40:
+        score += 1
+    elif price_change_5m > 40:
+        score -= 3
+    elif price_change_5m < -15:
+        score -= 4
+
+    # Volume / liquidity health /10
+    if 3 <= volume_liquidity_ratio <= 30:
+        score += 10
+    elif 1 <= volume_liquidity_ratio < 3:
+        score += 6
+    elif 30 < volume_liquidity_ratio <= 50:
+        score += 8
+    elif 50 < volume_liquidity_ratio <= 80:
+        score += 5
+    elif volume_liquidity_ratio > 80:
+        score += 2
+
+    # Freshness /10
+    if 1 <= age_hours <= 24:
+        score += 10
+    elif 24 < age_hours <= 48:
+        score += 8
+    elif 48 < age_hours <= 168:
+        score += 5
+    elif age_hours < 1:
+        score += 4
+    elif age_hours > 720:
+        score -= 10
+
+    # Additional extreme-movement penalty
+    if price_change_5m > 40 or price_change_1h > 150:
+        score -= 3
+
+    return max(0, min(round(score), 100))
 
 def scan_new_tokens():
 
@@ -3042,7 +3635,48 @@ def scan_new_tokens():
 
     results = []
 
-    profiles = profiles[:100]
+    # Diversify discovery candidates across chains.
+    # Keep the original discovery order inside each chain.
+    chain_groups = {}
+
+    for profile in profiles:
+        chain = profile.get("chainId")
+
+        if not chain:
+            continue
+
+        chain_key = str(chain).lower()
+
+        if chain_key not in chain_groups:
+            chain_groups[chain_key] = []
+
+        chain_groups[chain_key].append(profile)
+
+    balanced_profiles = []
+
+    max_rounds = max(
+        (len(group) for group in chain_groups.values()),
+        default=0
+    )
+
+    for round_index in range(max_rounds):
+
+        for chain_key in chain_groups:
+
+            group = chain_groups[chain_key]
+
+            if round_index < len(group):
+                balanced_profiles.append(
+                    group[round_index]
+                )
+
+                if len(balanced_profiles) >= 100:
+                    break
+
+        if len(balanced_profiles) >= 100:
+            break
+
+    profiles = balanced_profiles
 
     print(
         f"{GRAY}[RADAR] Profiles received: "
@@ -3099,10 +3733,47 @@ def scan_new_tokens():
         if not pair:
             continue
 
+        discovery_quality = calculate_discovery_quality(
+            pair
+        )
+
+        if str((pair.get("baseToken") or {}).get("symbol") or "").strip().lower() == "xsol":
+            print(
+                f"\\nDEBUG XSOL | CHAIN={chain} | "
+                f"ADDRESS={address} | "
+                f"DEX={pair.get('dexId')} | "
+                f"LIQ={(pair.get('liquidity') or {}).get('usd')} | "
+                f"VOL24={(pair.get('volume') or {}).get('h24')} | "
+                f"DISCOVERY={discovery_quality}\\n"
+            )
+
+        # Deep Scan focuses on recent discovery candidates.
+        # Older tokens remain available through Radar Memory / Positions.
+        try:
+            created_at = pair.get("pairCreatedAt")
+
+            if created_at:
+                created_ms = float(created_at)
+
+                if created_ms > 100000000000:
+                    created_ms /= 1000
+
+                age_hours = max(
+                    0,
+                    (time.time() - created_ms) / 3600
+                )
+
+                if age_hours > 720:
+                    continue
+
+        except Exception:
+            pass
+
         print(
             f"{GRAY}"
             f"[{index:02d}/{len(profiles)}] "
-            f"Security + Whale scan..."
+            f"Security + Whale scan... "
+            f"Discovery: {discovery_quality}/100"
             f"{RESET}"
         )
 
@@ -3139,6 +3810,19 @@ def scan_new_tokens():
             or "UNKNOWN"
         )
 
+        if str(symbol).strip().lower() == "xsol":
+            print(
+                f"\\nDEBUG XSOL | "
+                f"CHAIN={chain} | "
+                f"ADDRESS={address} | "
+                f"DEX={pair.get('dexId')} | "
+                f"LIQ={(pair.get('liquidity') or {}).get('usd')} | "
+                f"VOL24={(pair.get('volume') or {}).get('h24')} | "
+                f"VOL5M={(pair.get('volume') or {}).get('m5')} | "
+                f"DISCOVERY={discovery_quality} | "
+                f"PAIR_QUALITY={calculate_pair_quality(pair)}\\n"
+            )
+
         results.append({
 
             "symbol": symbol,
@@ -3150,6 +3834,7 @@ def scan_new_tokens():
             "address": address,
 
             "pair": pair,
+            "discovery_quality": discovery_quality,
 
             "analysis": analysis
 
@@ -3926,6 +4611,7 @@ def show_coin_details(item):
 
 
 def show_results(results):
+    print(f'\\n[DEBUG SHOW_RESULTS] COUNT={len(results) if results else 0}')
 
     clear()
 
@@ -4059,6 +4745,23 @@ def show_results(results):
                 f"    {YELLOW}GROW FORECAST{RESET}"
             )
 
+            direction_signal = analysis.get("direction_signal") or {}
+            direction = direction_signal.get("direction", "MIXED")
+            direction_score = direction_signal.get("score", 0)
+            direction_confidence = direction_signal.get("confidence", 0)
+
+            direction_icon = (
+                "🟢" if direction == "UP"
+                else "🔴" if direction == "DOWN"
+                else "🟡"
+            )
+
+            print(
+                f"    Direction: {direction_icon} {direction}   "
+                f"Score: {direction_score:+d}   "
+                f"C: {direction_confidence}%"
+            )
+
             for horizon in ("1H", "6H", "1D", "1W", "1M"):
 
                 data = forecast.get(horizon)
@@ -4118,6 +4821,9 @@ def show_results(results):
 
             f"   "
 
+            f"Discovery: "
+            f"{item.get('discovery_quality', 0)}/100   "
+
             f"KRYPT: "
             f"{analysis['krypt_score']:.1f}"
 
@@ -4149,7 +4855,7 @@ def show_results(results):
     print(
 
         f"{GRAY}"
-        "Showing top 10 candidates by KRYPT score."
+        "Showing top 10 candidates by combined KRYPT + Discovery score."
         f"{RESET}"
 
     )
@@ -5179,12 +5885,102 @@ def dashboard():
 # START
 # ============================================================
 
+def forecast_evaluator_worker():
+    """
+    Background V4 forecast evaluator.
+
+    Checks only unfinished V4 horizons.
+    The worker never evaluates multiple horizons
+    from the same record in one API snapshot.
+    """
+
+    horizons = (
+        "1H",
+        "6H",
+        "1D",
+        "1W",
+        "1M"
+    )
+
+    while True:
+
+        try:
+            if os.path.exists(
+                FORECAST_MEMORY_FILE
+            ):
+
+                with open(
+                    FORECAST_MEMORY_FILE,
+                    "r",
+                    encoding="utf-8"
+                ) as f:
+                    memory = json.load(f)
+
+                if isinstance(memory, list):
+
+                    changed = False
+
+                    for horizon in horizons:
+
+                        for index, record in enumerate(memory):
+
+                            if not isinstance(record, dict):
+                                continue
+
+                            if record.get(
+                                "direction_engine"
+                            ) != "V4":
+                                continue
+
+                            if record.get(
+                                f"evaluated_{horizon}"
+                            ):
+                                continue
+
+                            before = dict(record)
+
+                            memory[index] = (
+                                evaluate_forecast_record(
+                                    record,
+                                    target_horizon=horizon
+                                )
+                            )
+
+                            if memory[index] != before:
+                                changed = True
+
+                    if changed:
+
+                        with open(
+                            FORECAST_MEMORY_FILE,
+                            "w",
+                            encoding="utf-8"
+                        ) as f:
+                            json.dump(
+                                memory,
+                                f,
+                                indent=2
+                            )
+
+        except Exception:
+            pass
+
+        time.sleep(60)
+
+
+
 def main():
 
     boot_animation()
 
     try:
-        evaluate_forecast_memory()
+        evaluator_thread = threading.Thread(
+            target=forecast_evaluator_worker,
+            daemon=True
+        )
+
+        evaluator_thread.start()
+
     except Exception:
         pass
 

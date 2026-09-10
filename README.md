@@ -1,28 +1,21 @@
-KRYPT Dashboard
+# KRYPT Dashboard
 
-Crypto radar ve risk tarama aracı.
+Termux için kripto radar ve risk tarama aracı.
 
-Kurulum
+## Kurulum
 
-Termux'u aç:
+Termux'u aç ve sırayla çalıştır:
 
+```bash
 pkg update -y
-
 pkg install -y git
-
-Projeyi indir:
-
 git clone https://github.com/unfa7r/KRYPT-Dashboard.git
-
 cd KRYPT-Dashboard
-
-Kur:
-
 bash install.sh
+```
 
-Çalıştır:
+## Çalıştır
 
+```bash
 python krypt.py
-
-
-KRYPT hazır.
+```
