@@ -1,6 +1,6 @@
 KRYPT Dashboard
 
-Kurulum
+## Kurulum
 
 Termux'u aç ve sırayla çalıştır:
 
