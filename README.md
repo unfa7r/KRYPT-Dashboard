@@ -1,6 +1,6 @@
-KRYPT Dashboard
+# KRYPT Dashboard
 
-Kurulum
+## Kurulum
 
 Termux'u aç ve sırayla çalıştır:
 
@@ -10,6 +10,6 @@ git clone https://github.com/unfa7r/KRYPT-Dashboard.git
 cd KRYPT-Dashboard
 ./install.sh
 
-Çalıştır
+## Çalıştır
 
 python krypt.py
