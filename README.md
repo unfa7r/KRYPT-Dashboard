@@ -17,7 +17,7 @@ bash install.sh
 
 python krypt.py
 
-# Sinyal Sistemini Çalıştır
+# Veya Oto Sinyal Sistemini Çalıştır
 
 python krypt_signals.py
 
