@@ -1,6 +1,6 @@
-KRYPT Dashboard
+# KRYPT Dashboard
 
-Kurulum
+# Kurulum
 
 Termux'u aç ve sırayla çalıştır:
 
@@ -13,15 +13,15 @@ cd KRYPT-Dashboard
 
 bash install.sh
 
-Çalıştır
+# Çalıştır
 
 python krypt.py
 
-Sinyal Sistemini Çalıştır
+# Sinyal Sistemini Çalıştır
 
 python krypt_signals.py
 
-Telegram
+# Telegram
 
 Bot: @KRYPTSignalsBot
 
