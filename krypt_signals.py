@@ -12,7 +12,7 @@ MIN_SCORE = 90
 SCAN_INTERVAL = int(os.getenv("KRYPT_SCAN_INTERVAL", "120"))
 
 STATE_FILE = "krypt_signals_state.json"
-USERS_FILE = "krypt_signal_users.json"
+USER_ID_FILE = "krypt_user_id.json"
 
 BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
 
@@ -116,168 +116,43 @@ def record_alert(signal, state):
     save_state(state)
 
 
-def load_users():
-    try:
-        with open(USERS_FILE, "r", encoding="utf-8") as f:
-            data = json.load(f)
-            return data if isinstance(data, list) else []
-    except Exception:
-        return []
-
-
-def save_users(users):
-    try:
-        with open(USERS_FILE, "w", encoding="utf-8") as f:
-            json.dump(sorted(set(users)), f, ensure_ascii=False, indent=2)
-    except Exception:
-        pass
-
-
-def poll_users(state):
-    users = load_users()
-    offset = int(state.get("telegram_update_offset", 0) or 0)
-
-    url = f"https://api.telegram.org/bot{BOT_TOKEN}/getUpdates"
-
-    try:
-        response = requests.get(
-            url,
-            params={
-                "offset": offset,
-                "timeout": 1
-            },
-            timeout=5
-        )
-
-        if not response.ok:
-            return users
-
-        data = response.json()
-
-        if not data.get("ok"):
-            return users
-
-        updates = data.get("result") or []
-
-        for update in updates:
-            update_id = update.get("update_id")
-
-            if isinstance(update_id, int):
-                state["telegram_update_offset"] = update_id + 1
-
-            message = update.get("message") or {}
-            chat = message.get("chat") or {}
-            chat_id = chat.get("id")
-            text = str(message.get("text") or "").strip().lower()
-
-            if chat_id is None:
-                continue
-
-            if text.startswith("/start"):
-                if chat_id not in users:
-                    users.append(chat_id)
-                    print(
-                        f"[KRYPT SIGNALS] User registered: "
-                        f"{chat_id}"
-                    )
-
-            elif text.startswith("/stop"):
-                if chat_id in users:
-                    users.remove(chat_id)
-                    print(
-                        f"[KRYPT SIGNALS] User removed: "
-                        f"{chat_id}"
-                    )
-
-        save_users(users)
-        save_state(state)
-
-    except Exception as e:
-        print(f"[KRYPT SIGNALS] User polling error: {e}")
-
-    return users
-
-
-def send_telegram(signal, users):
+def send_telegram(signal, user_id):
     if not BOT_TOKEN:
         print("[KRYPT SIGNALS] Telegram bot token missing.")
         return False
 
-    if not users:
-        print("[KRYPT SIGNALS] No registered users.")
+    if not user_id:
+        print("[KRYPT SIGNALS] Telegram user ID missing.")
         return False
 
-    message = (
-        "🚨 KRYPT SIGNALS\\n\\n"
-        f"🪙 {signal['name']} ({signal['symbol']})\\n"
-        f"🎯 KRYPT Score: {signal['score']:.1f}\\n"
-        "🟢 Signal: BUY\\n\\n"
-        f"💰 Market Cap: {money(signal['market_cap'])}\\n"
-        f"💵 Price: ${signal['price']}\\n"
-        f"💧 Liquidity: {money(signal['liquidity'])}\\n"
-        f"📊 Volume 5m: {money(signal['volume_5m'])}\\n"
-        f"📈 Buys/Sells: {signal['buys_5m']}/{signal['sells_5m']}\\n\\n"
-        f"⛓ Chain: {signal['chain']}\\n"
-        f"🕐 {signal['signal_time']}\\n\\n"
-        f"📋 Mint:\\n`{signal['address']}`"
-    )
-
+    message = make_signal(signal)
     url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
 
-    sent = 0
-    failed = 0
-    invalid_users = []
+    try:
+        response = requests.post(
+            url,
+            json={
+                "chat_id": user_id,
+                "text": message,
+                "parse_mode": "Markdown",
+                "disable_web_page_preview": True,
+            },
+            timeout=15,
+        )
 
-    for chat_id in list(users):
-        try:
-            response = requests.post(
-                url,
-                json={
-                    "chat_id": chat_id,
-                    "text": message,
-                    "parse_mode": "Markdown"
-                },
-                timeout=15
-            )
+        if response.ok:
+            print(f"[KRYPT SIGNALS] Telegram sent -> {user_id}")
+            return True
 
-            if response.ok:
-                sent += 1
-            else:
-                failed += 1
+        print(f"[KRYPT SIGNALS] Telegram error: {response.status_code} {response.text}")
+        return False
 
-                try:
-                    error = response.json()
-                    if error.get("error_code") in (400, 403):
-                        invalid_users.append(chat_id)
-                except Exception:
-                    pass
-
-        except Exception as e:
-            failed += 1
-            print(
-                f"[KRYPT SIGNALS] Telegram error "
-                f"for {chat_id}: {e}"
-            )
-
-        time.sleep(0.2)
-
-    if invalid_users:
-        users[:] = [
-            user for user in users
-            if user not in invalid_users
-        ]
-        save_users(users)
-
-    print(
-        f"[KRYPT SIGNALS] Telegram sent: "
-        f"{signal['symbol']} {signal['score']:.1f} "
-        f"| users: {sent} | failed: {failed}"
-    )
-
-    return sent > 0
+    except Exception as e:
+        print(f"[KRYPT SIGNALS] Telegram exception: {e}")
+        return False
 
 
-def run_scan(state):
+def run_scan(state, user_id):
     print()
     print("=" * 56)
     print("              KRYPT SIGNALS SCAN")
@@ -325,7 +200,6 @@ def run_scan(state):
         f"90+ BUY: {len(candidates)}"
     )
 
-    users = poll_users(state)
 
     for signal in candidates:
         if not should_send(signal, state):
@@ -335,37 +209,58 @@ def run_scan(state):
             )
             continue
 
-        if send_telegram(signal, users):
+        if send_telegram(signal, user_id):
             record_alert(signal, state)
 
         time.sleep(1)
 
 
 def main():
-    print("========================================")
-    print("          KRYPT SIGNALS")
-    print("========================================")
-    print(f"Minimum score : {MIN_SCORE}")
-    print(f"Scan interval : {SCAN_INTERVAL}s")
-    print("Automatic mode: ON")
-    print()
-
     if not BOT_TOKEN:
-        print("[KRYPT SIGNALS] Telegram bot token missing.")
-        print()
         print("Set TELEGRAM_BOT_TOKEN first.")
+        return
+
+    user_id = os.getenv("TELEGRAM_USER_ID", "").strip()
+
+    if not user_id and os.path.exists(USER_ID_FILE):
+        try:
+            with open(USER_ID_FILE, "r", encoding="utf-8") as f:
+                user_id = json.load(f).get("user_id", "").strip()
+        except Exception:
+            user_id = ""
+
+    if not user_id:
+        print()
+        print("[KRYPT SIGNALS] Telegram User ID gerekli.")
+        print("User ID'nizi öğrenmek için:")
+        print("1. Telegram'da @userinfobot'u açın.")
+        print("2. /start gönderin.")
+        print("3. Size verilen ID'yi aşağıya girin.")
+        print()
+        user_id = input("Telegram User ID: ").strip()
+
+        if user_id:
+            with open(USER_ID_FILE, "w", encoding="utf-8") as f:
+                json.dump({"user_id": user_id}, f)
+
+    if not user_id:
+        print("Telegram User ID is required.")
         return
 
     state = load_state()
 
-    while True:
-        run_scan(state)
+    print(f"[KRYPT SIGNALS] Started -> Telegram User ID: {user_id}")
+    print(f"[KRYPT SIGNALS] Scan interval: {SCAN_INTERVAL}s")
 
-        print()
-        print(
-            f"[KRYPT SIGNALS] Next scan in "
-            f"{SCAN_INTERVAL} seconds..."
-        )
+    while True:
+        try:
+            run_scan(state, user_id)
+            save_state(state)
+        except KeyboardInterrupt:
+            print("\n[KRYPT SIGNALS] Stopped.")
+            break
+        except Exception as e:
+            print(f"[KRYPT SIGNALS] Scan error: {e}")
 
         time.sleep(SCAN_INTERVAL)
 

@@ -19,3 +19,5 @@ krypt_signal.json
 krypt_signal_history.json
 krypt_signals_state.json
 krypt_signal_users.json
+
+krypt_user_id.json
