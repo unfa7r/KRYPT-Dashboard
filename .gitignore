@@ -1,10 +1,21 @@
 __pycache__/
 *.pyc
-krypt_backup.py
 .venv/
-krypt_radar_memory.json
 
+*.backup
+*.bak
+*.before_*
+
+krypt_backup.py
+
+krypt_radar_memory.json
 krypt_notes.json
 krypt_positions.json
-
 krypt_forecast_memory.json
+krypt_forecast_memory.json.corrupt
+krypt_forecast_memory.json.corrupt_backup
+
+krypt_signal.json
+krypt_signal_history.json
+krypt_signals_state.json
+krypt_signal_users.json

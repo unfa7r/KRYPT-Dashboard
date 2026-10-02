@@ -20,9 +20,15 @@ GRAY = "\033[90m"
 DEX_PROFILES_URL = "https://api.dexscreener.com/token-profiles/latest/v1"
 DEX_BOOSTS_URL = "https://api.dexscreener.com/token-boosts/latest/v1"
 DEX_TOP_BOOSTS_URL = "https://api.dexscreener.com/token-boosts/top/v1"
+DEX_RECENT_UPDATES_URL = "https://api.dexscreener.com/token-profiles/recent-updates/v1"
+DEX_COMMUNITY_TAKEOVERS_URL = "https://api.dexscreener.com/community-takeovers/latest/v1"
+DEX_ADS_URL = "https://api.dexscreener.com/ads/latest/v1"
+GECKO_NEW_POOLS_URL = "https://api.geckoterminal.com/api/v2/networks/new_pools"
 DEX_TOKEN_PAIRS_URL = "https://api.dexscreener.com/token-pairs/v1/{chain}/{address}"
 GOPLUS_SOLANA_URL = "https://api.gopluslabs.io/api/v1/solana/token_security/"
 GOPLUS_EVM_URL = "https://api.gopluslabs.io/api/v1/token_security/{chain_id}"
+RUGCHECK_REPORT_URL = "https://api.rugcheck.xyz/v1/tokens/{mint}/report"
+RUGCHECK_CACHE = {}
 
 GOPLUS_CHAIN_IDS = {
     "ethereum": "1",
@@ -75,21 +81,240 @@ RADAR_MEMORY_FILE = "krypt_radar_memory.json"
 POSITIONS_FILE = "krypt_positions.json"
 NOTES_FILE = "krypt_notes.json"
 FORECAST_MEMORY_FILE = "krypt_forecast_memory.json"
+SIGNAL_FILE = "krypt_signal.json"
+SIGNAL_HISTORY_FILE = "krypt_signal_history.json"
+SIGNAL_MIN_SCORE = 90
+SIGNAL_HISTORY_LOCK = threading.Lock()
+
+def publish_krypt_signal(item):
+    try:
+        analysis = item.get("analysis") or {}
+        score = float(analysis.get("krypt_score") or 0)
+
+        if analysis.get("signal") != "BUY" or score < SIGNAL_MIN_SCORE:
+            return
+
+        pair = item.get("pair") or {}
+        base = pair.get("baseToken") or {}
+        liquidity = pair.get("liquidity") or {}
+        volume = pair.get("volume") or {}
+        txns = pair.get("txns") or {}
+        txns_5m = txns.get("m5") or {}
+
+        now = datetime.now(timezone.utc).isoformat()
+        address = item.get("address") or base.get("address") or ""
+
+        signal = {
+            "signal_id": f"{item.get('chain', 'unknown')}:{address}:{score:.1f}",
+            "signal": "BUY",
+            "score": score,
+            "symbol": item.get("symbol") or base.get("symbol") or "UNKNOWN",
+            "name": item.get("name") or base.get("name") or "UNKNOWN",
+            "chain": item.get("chain") or pair.get("chainId") or "unknown",
+            "address": address,
+            "market_cap": pair.get("marketCap"),
+            "price": pair.get("priceUsd"),
+            "liquidity": liquidity.get("usd"),
+            "volume_5m": volume.get("m5"),
+            "buys_5m": txns_5m.get("buys", 0),
+            "sells_5m": txns_5m.get("sells", 0),
+            "security": analysis.get("security") or {},
+            "whale": analysis.get("whale") or {},
+            "signal_time": now
+        }
+
+        tmp = SIGNAL_FILE + ".tmp"
+
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(signal, f, ensure_ascii=False, indent=2)
+
+        os.replace(tmp, SIGNAL_FILE)
+
+        try:
+            with SIGNAL_HISTORY_LOCK:
+                history = []
+
+                if os.path.exists(SIGNAL_HISTORY_FILE):
+                    try:
+                        with open(
+                            SIGNAL_HISTORY_FILE,
+                            "r",
+                            encoding="utf-8"
+                        ) as f:
+                            data = json.load(f)
+                            if isinstance(data, list):
+                                history = data
+                    except Exception:
+                        history = []
+
+                duplicate = False
+
+                for saved in reversed(history):
+                    if not isinstance(saved, dict):
+                        continue
+
+                    if (
+                        str(saved.get("chain", "")).lower()
+                        == str(signal.get("chain", "")).lower()
+                        and str(saved.get("address", "")).lower()
+                        == str(signal.get("address", "")).lower()
+                    ):
+                        duplicate = True
+                        break
+
+                if not duplicate:
+                    history.append({
+                        **signal,
+                        "entry_price": safe_float(signal.get("price")),
+                        "evaluated": False,
+                        "5m": None,
+                        "15m": None,
+                        "30m": None,
+                        "60m": None,
+                        "max_gain": None,
+                        "max_drawdown": None,
+                        "validation_status": "PENDING"
+                    })
+
+                    tmp_history = SIGNAL_HISTORY_FILE + ".tmp"
+
+                    with open(
+                        tmp_history,
+                        "w",
+                        encoding="utf-8"
+                    ) as f:
+                        json.dump(
+                            history,
+                            f,
+                            ensure_ascii=False,
+                            indent=2
+                        )
+                        f.flush()
+                        os.fsync(f.fileno())
+
+                    os.replace(
+                        tmp_history,
+                        SIGNAL_HISTORY_FILE
+                    )
+
+        except Exception as e:
+            print(
+                f"{RED}[KRYPT VALIDATION] "
+                f"History error: {e}{RESET}"
+            )
+
+        print(
+            f"{GREEN}[KRYPT SIGNALS] "
+            f"{signal['symbol']} BUY {score:.1f} "
+            f"published.{RESET}"
+        )
+
+    except Exception as e:
+        print(
+            f"{RED}[KRYPT SIGNALS] Publish error: "
+            f"{e}{RESET}"
+        )
+
+
+FORECAST_MEMORY_LOCK = threading.Lock()
+
+
+def write_forecast_memory(memory):
+    temp_file = FORECAST_MEMORY_FILE + ".tmp"
+
+    with open(temp_file, "w", encoding="utf-8") as f:
+        json.dump(memory, f, indent=2, ensure_ascii=False)
+        f.flush()
+        os.fsync(f.fileno())
+
+    os.replace(temp_file, FORECAST_MEMORY_FILE)
+
 
 def save_forecast_memory(record):
     try:
-        memory = []
+        with FORECAST_MEMORY_LOCK:
+            memory = []
 
-        if os.path.exists(FORECAST_MEMORY_FILE):
-            with open(FORECAST_MEMORY_FILE, "r", encoding="utf-8") as f:
-                data = json.load(f)
-                if isinstance(data, list):
-                    memory = data
+            if os.path.exists(FORECAST_MEMORY_FILE):
+                with open(
+                    FORECAST_MEMORY_FILE,
+                    "r",
+                    encoding="utf-8"
+                ) as f:
+                    data = json.load(f)
 
-        memory.append(record)
+                    if isinstance(data, list):
+                        memory = data
 
-        with open(FORECAST_MEMORY_FILE, "w", encoding="utf-8") as f:
-            json.dump(memory, f, indent=2)
+            chain = str(
+                record.get("chainId") or ""
+            ).lower()
+
+            address = str(
+                record.get("tokenAddress") or ""
+            ).lower()
+
+            engine = str(
+                record.get("direction_engine") or ""
+            ).upper()
+
+            saved_at = record.get("saved_at")
+
+            if chain and address and saved_at:
+                try:
+                    current_time = datetime.fromisoformat(
+                        saved_at
+                    )
+
+                    for existing in reversed(memory):
+                        if not isinstance(existing, dict):
+                            continue
+
+                        existing_chain = str(
+                            existing.get("chainId") or ""
+                        ).lower()
+
+                        existing_address = str(
+                            existing.get("tokenAddress") or ""
+                        ).lower()
+
+                        existing_engine = str(
+                            existing.get("direction_engine") or ""
+                        ).upper()
+
+                        if (
+                            existing_chain != chain
+                            or existing_address != address
+                            or existing_engine != engine
+                        ):
+                            continue
+
+                        existing_time = existing.get("saved_at")
+
+                        if not existing_time:
+                            continue
+
+                        try:
+                            previous_time = datetime.fromisoformat(
+                                existing_time
+                            )
+                        except Exception:
+                            continue
+
+                        age_seconds = (
+                            current_time - previous_time
+                        ).total_seconds()
+
+                        if 0 <= age_seconds < 600:
+                            return
+
+                        break
+
+                except Exception:
+                    pass
+
+            memory.append(record)
+            write_forecast_memory(memory)
 
     except Exception:
         pass
@@ -136,6 +361,110 @@ def classify_forecast_outcome(actual_change, forecast):
     }
 
 
+def evaluate_krypt_signal_record(record):
+    try:
+        signal_time = datetime.fromisoformat(
+            record["signal_time"]
+        )
+
+        now = datetime.now(timezone.utc)
+
+        horizons = {
+            "5m": 5,
+            "15m": 15,
+            "30m": 30,
+            "60m": 60
+        }
+
+        tolerance = 2
+
+        chain = record.get("chain")
+        address = record.get("address")
+        entry_price = safe_float(
+            record.get("entry_price")
+        )
+
+        if not chain or not address or entry_price <= 0:
+            return record
+
+        for horizon, minutes in horizons.items():
+
+            if record.get(horizon) is not None:
+                continue
+
+            age_minutes = (
+                now - signal_time
+            ).total_seconds() / 60
+
+            if age_minutes < minutes:
+                continue
+
+            if age_minutes >= minutes + tolerance:
+                record[f"{horizon}_status"] = "MISSED"
+                continue
+
+            pairs = get_token_pairs(
+                chain,
+                address
+            )
+
+            pair = choose_best_pair(pairs)
+
+            if not pair:
+                continue
+
+            current_price = safe_float(
+                pair.get("priceUsd")
+            )
+
+            if current_price <= 0:
+                continue
+
+            actual_change = (
+                (current_price - entry_price)
+                / entry_price
+            ) * 100
+
+            record[horizon] = round(
+                actual_change,
+                2
+            )
+
+            record[f"{horizon}_status"] = "VALID"
+
+            record[f"{horizon}_evaluated_at"] = (
+                now.isoformat()
+            )
+
+        valid = all(
+            record.get(
+                f"{horizon}_status"
+            ) == "VALID"
+            for horizon in horizons
+        )
+
+        missed = any(
+            record.get(
+                f"{horizon}_status"
+            ) == "MISSED"
+            for horizon in horizons
+        )
+
+        if valid:
+            record["validation_status"] = "COMPLETE"
+            record["evaluated"] = True
+            record["evaluated_at"] = (
+                now.isoformat()
+            )
+        elif missed:
+            record["validation_status"] = "INCOMPLETE"
+            record["evaluated"] = False
+
+        return record
+
+    except Exception:
+        return record
+
 def evaluate_forecast_record(record, target_horizon=None):
     try:
         saved_at = datetime.fromisoformat(
@@ -152,7 +481,16 @@ def evaluate_forecast_record(record, target_horizon=None):
             "1M": 24 * 30
         }
 
-        forecasts = record.get("forecasts", {})
+        if record.get("direction_engine") == "V4":
+            forecasts = record.get(
+                "forecasts_v4",
+                {}
+            )
+        else:
+            forecasts = record.get(
+                "forecasts",
+                {}
+            )
 
         selected_horizons = (
             [target_horizon]
@@ -326,16 +664,8 @@ def evaluate_forecast_memory(target_horizon=None):
             if memory[index] != before:
                 evaluated_count += 1
 
-        with open(
-            FORECAST_MEMORY_FILE,
-            "w",
-            encoding="utf-8"
-        ) as f:
-            json.dump(
-                memory,
-                f,
-                indent=2
-            )
+        with FORECAST_MEMORY_LOCK:
+            write_forecast_memory(memory)
 
         return evaluated_count
 
@@ -627,19 +957,6 @@ def save_radar_memory(results):
         old_memory = load_radar_memory()
 
         combined = memory + old_memory
-
-        # Re-add recently strong BUY candidates so they are
-        # not lost when DexScreener discovery results rotate.
-        try:
-            memory = load_radar_memory()
-
-            for saved in memory:
-
-                if isinstance(saved, dict):
-                    profiles.append(saved)
-
-        except Exception:
-            pass
 
         unique = []
         seen = set()
@@ -1095,6 +1412,125 @@ def get_latest_profiles():
         except Exception:
             pass
 
+        try:
+
+            recent_response = SESSION.get(
+                DEX_RECENT_UPDATES_URL,
+                timeout=15
+            )
+
+            if recent_response.status_code == 200:
+
+                recent_updates = recent_response.json()
+
+                if isinstance(recent_updates, list):
+                    profiles.extend(recent_updates)
+
+        except Exception:
+            pass
+
+        try:
+
+            takeover_response = SESSION.get(
+                DEX_COMMUNITY_TAKEOVERS_URL,
+                timeout=15
+            )
+
+            if takeover_response.status_code == 200:
+
+                takeovers = takeover_response.json()
+
+                if isinstance(takeovers, list):
+                    profiles.extend(takeovers)
+
+        except Exception:
+            pass
+
+        try:
+
+            ads_response = SESSION.get(
+                DEX_ADS_URL,
+                timeout=15
+            )
+
+            if ads_response.status_code == 200:
+
+                ads = ads_response.json()
+
+                if isinstance(ads, list):
+                    profiles.extend(ads)
+
+        except Exception:
+            pass
+
+        gecko_networks = (
+            ("bsc", "bsc"),
+            ("eth", "ethereum"),
+            ("base", "base"),
+        )
+
+        for gecko_network, display_chain in gecko_networks:
+
+            try:
+
+                gecko_response = SESSION.get(
+                    f"https://api.geckoterminal.com/api/v2/networks/{gecko_network}/new_pools",
+                    headers={"Accept": "application/json;version=20230203"},
+                    timeout=15
+                )
+
+                if gecko_response.status_code != 200:
+                    continue
+
+                gecko_data = gecko_response.json()
+                gecko_pools = gecko_data.get("data", [])
+
+                if not isinstance(gecko_pools, list):
+                    continue
+
+                for pool in gecko_pools:
+
+                    if not isinstance(pool, dict):
+                        continue
+
+                    attrs = pool.get("attributes", {})
+                    relationships = pool.get("relationships", {})
+
+                    base_token = relationships.get(
+                        "base_token",
+                        {}
+                    )
+
+                    token_data = base_token.get("data", {})
+                    token_id = token_data.get("id")
+
+                    if not token_id:
+                        continue
+
+                    token_parts = str(token_id).split("_", 1)
+
+                    if len(token_parts) != 2:
+                        continue
+
+                    chain_id = token_parts[0]
+                    token_address = token_parts[1]
+
+                    if not chain_id or not token_address:
+                        continue
+
+                    profiles.append({
+                        "chainId": chain_id,
+                        "tokenAddress": token_address,
+                        "source": "geckoterminal",
+                        "poolAddress": attrs.get("address"),
+                        "poolName": attrs.get("name")
+                    })
+
+            except Exception:
+                pass
+
+            time.sleep(2)
+
         # Re-add recently strong BUY candidates.
         try:
             memory = load_radar_memory()
@@ -1261,10 +1697,44 @@ def choose_best_pair(pairs):
     )
 
 
-def get_solana_security(token_address):
+def get_rugcheck_security(token_address):
+
+    if token_address in RUGCHECK_CACHE:
+        return RUGCHECK_CACHE[token_address]
 
     try:
+        response = SESSION.get(
+            RUGCHECK_REPORT_URL.format(
+                mint=token_address
+            ),
+            headers={
+                "Accept": "application/json"
+            },
+            timeout=15
+        )
 
+        if response.status_code != 200:
+            RUGCHECK_CACHE[token_address] = None
+            return None
+
+        data = response.json()
+
+        if not isinstance(data, dict):
+            RUGCHECK_CACHE[token_address] = None
+            return None
+
+        RUGCHECK_CACHE[token_address] = data
+        return data
+
+    except Exception:
+        RUGCHECK_CACHE[token_address] = None
+        return None
+
+def get_solana_security(token_address):
+
+    goplus_security = None
+
+    try:
         response = SESSION.get(
             GOPLUS_SOLANA_URL,
             params={
@@ -1273,31 +1743,106 @@ def get_solana_security(token_address):
             timeout=15
         )
 
-        if response.status_code != 200:
-            return None
+        if response.status_code == 200:
+            data = response.json()
+            result = data.get("result")
 
-        data = response.json()
-
-        result = data.get("result")
-
-        if not isinstance(result, dict):
-            return None
-
-        if token_address in result:
-            return result[token_address]
-
-        if len(result) == 1:
-            return next(iter(result.values()))
-
-        return None
+            if isinstance(result, dict):
+                if token_address in result:
+                    goplus_security = result[token_address]
+                elif len(result) == 1:
+                    goplus_security = next(iter(result.values()))
 
     except Exception:
+        pass
+
+    if isinstance(goplus_security, dict):
+        result = dict(goplus_security)
+    else:
+        result = {}
+
+    rugcheck = get_rugcheck_security(token_address)
+
+    if not isinstance(rugcheck, dict):
+        if isinstance(goplus_security, dict):
+            result["_rugcheck"] = {
+                "available": False
+            }
+        else:
+            return None
+
+    if isinstance(rugcheck, dict):
+
+        rug_holders = rugcheck.get("topHolders")
+
+        if (
+            not isinstance(result.get("holders"), list)
+            or not result.get("holders")
+        ):
+            if isinstance(rug_holders, list) and rug_holders:
+                holders = []
+
+                for holder in rug_holders:
+                    if not isinstance(holder, dict):
+                        continue
+
+                    item = dict(holder)
+
+                    if "percent" not in item:
+                        pct = item.get("pct")
+
+                        if pct is not None:
+                            item["percent"] = pct
+
+                    holders.append(item)
+
+                if holders:
+                    result["holders"] = holders
+
+        if not result.get("holder_count"):
+            total_holders = rugcheck.get("totalHolders")
+
+            if total_holders is not None:
+                result["holder_count"] = total_holders
+
+        if "mint_authority" not in result:
+            result["mint_authority"] = rugcheck.get(
+                "mintAuthority"
+            )
+
+        if "freeze_authority" not in result:
+            result["freeze_authority"] = rugcheck.get(
+                "freezeAuthority"
+            )
+
+        result["_rugcheck"] = {
+            "available": True,
+            "score": rugcheck.get("score"),
+            "score_normalised": rugcheck.get(
+                "score_normalised"
+            ),
+            "risks": rugcheck.get("risks") or [],
+            "rugged": rugcheck.get("rugged"),
+            "creator": rugcheck.get("creator"),
+            "mint_authority": rugcheck.get(
+                "mintAuthority"
+            ),
+            "freeze_authority": rugcheck.get(
+                "freezeAuthority"
+            )
+        }
+
+    if not result:
         return None
 
+    return result
 
 def get_token_security(chain, token_address):
 
     chain_name = str(chain).lower().strip()
+
+    if chain_name == "eth":
+        chain_name = "ethereum"
 
     if chain_name == "solana":
         return get_solana_security(token_address)
@@ -1378,7 +1923,6 @@ def get_token_age_hours(pair):
 # ============================================================
 
 def analyze_holders(security):
-
     result = {
         "available": False,
         "holder_count": 0,
@@ -1390,80 +1934,37 @@ def analyze_holders(security):
     }
 
     if not security:
-
-        result["reasons"].append(
-            "Holder data unavailable"
-        )
-
+        result["reasons"].append("Holder data unavailable")
         return result
 
     holders = security.get("holders")
 
-    if not isinstance(holders, list):
-
-        result["reasons"].append(
-            "Top holder data unavailable"
-        )
-
-        return result
-
-    if not holders:
-
-        result["reasons"].append(
-            "Top holder data unavailable"
-        )
-
+    if not isinstance(holders, list) or not holders:
+        result["reasons"].append("Top holder data unavailable")
         return result
 
     percentages = []
-
     locked_percent = 0.0
 
     for holder in holders:
-
         if not isinstance(holder, dict):
             continue
 
-        # ====================================================
-        # IMPORTANT GOPLUS FORMAT
-        #
-        # GoPlus returns:
-        #
-        # "percent": "0.7679"
-        #
-        # This already means 0.7679%.
-        #
-        # Therefore DO NOT multiply by 100.
-        # ====================================================
+        percent = safe_float(holder.get("percent"))
 
-        percent = safe_float(
-            holder.get("percent")
-        )
-
-        # GoPlus holder percent is a ratio:
-        # 1.0 = 100%, 0.7502 = 75.02%
         if 0 <= percent <= 1:
             percent *= 100
 
         if percent > 0:
             percentages.append(percent)
 
-        # GoPlus may return integer 0/1 or string "0"/"1".
         locked = holder.get("is_locked")
 
-        if str(locked).lower() in (
-            "1",
-            "true"
-        ):
-
+        if str(locked).lower() in ("1", "true"):
             locked_percent += percent
 
     if not percentages:
-
-        result["reasons"].append(
-            "Holder percentages unavailable"
-        )
-
+        result["reasons"].append("Holder percentages unavailable")
         return result
 
     result["available"] = True
@@ -1472,103 +1973,61 @@ def analyze_holders(security):
         security.get("holder_count")
     )
 
-    percentages.sort(
-        reverse=True
-    )
+    if result["holder_count"] <= 0:
+        result["holder_count"] = len(holders)
 
-    # IMPORTANT:
-    # percentages are already actual percentage values.
+    percentages.sort(reverse=True)
 
-    result["top_holder_percent"] = (
-        percentages[0]
-    )
-
-    result["top10_percent"] = (
-        sum(percentages[:10])
-    )
-
-    result["locked_percent"] = (
-        locked_percent
-    )
+    result["top_holder_percent"] = percentages[0]
+    result["top10_percent"] = sum(percentages[:10])
+    result["locked_percent"] = locked_percent
 
     top = result["top_holder_percent"]
     top10 = result["top10_percent"]
 
-    # --------------------------------------------------------
-    # TOP HOLDER RISK
-    # --------------------------------------------------------
-
     if top >= 40:
-
         result["risk"] += 20
-
         result["reasons"].append(
             f"Extreme top-holder concentration ({top:.2f}%)"
         )
-
     elif top >= 25:
-
         result["risk"] += 12
-
         result["reasons"].append(
             f"High top-holder concentration ({top:.2f}%)"
         )
-
     elif top >= 15:
-
         result["risk"] += 6
-
         result["reasons"].append(
             f"Moderate top-holder concentration ({top:.2f}%)"
         )
 
-    # --------------------------------------------------------
-    # TOP 10 RISK
-    # --------------------------------------------------------
-
     if top10 >= 80:
-
         result["risk"] += 15
-
         result["reasons"].append(
             f"Top 10 control {top10:.2f}%"
         )
-
     elif top10 >= 65:
-
         result["risk"] += 10
-
         result["reasons"].append(
             f"Top 10 control {top10:.2f}%"
         )
-
     elif top10 >= 50:
-
         result["risk"] += 5
-
         result["reasons"].append(
             f"Top 10 control {top10:.2f}%"
         )
-
-    # --------------------------------------------------------
-    # LOCKED
-    # --------------------------------------------------------
 
     if locked_percent >= 30:
-
         result["reasons"].append(
             f"{locked_percent:.2f}% of top holders locked"
         )
 
-    # --------------------------------------------------------
-    # NORMAL
-    # --------------------------------------------------------
-
     if not result["reasons"]:
-
         result["reasons"].append(
             "Holder distribution looks acceptable"
         )
+
+    result["risk"] = min(result["risk"], 100)
 
     return result
 
@@ -1578,7 +2037,6 @@ def analyze_holders(security):
 # ============================================================
 
 def analyze_security(security):
-
     result = {
         "available": False,
         "safe": False,
@@ -1594,9 +2052,80 @@ def analyze_security(security):
 
     result["available"] = True
 
-    # ========================================================
-    # SOLANA SECURITY
-    # ========================================================
+    rugcheck = security.get("_rugcheck")
+
+    if isinstance(rugcheck, dict):
+        if rugcheck.get("available") is False:
+            result["available"] = False
+            result["reasons"].append(
+                "RugCheck data unavailable"
+            )
+            return result
+
+        rugged = rugcheck.get("rugged")
+
+        if str(rugged).lower() in ("true", "1", "yes"):
+            result["risk"] += 100
+            result["reasons"].append(
+                "RugCheck reports token as rugged"
+            )
+
+        mint_authority = rugcheck.get("mint_authority")
+        freeze_authority = rugcheck.get("freeze_authority")
+
+        if mint_authority:
+            result["risk"] += 8
+            result["reasons"].append(
+                "RugCheck mint authority detected"
+            )
+
+        if freeze_authority:
+            result["risk"] += 8
+            result["reasons"].append(
+                "RugCheck freeze authority detected"
+            )
+
+        risk_weights = {
+            "creator history of rugged tokens": 40,
+            "large amount of lp unlocked": 20,
+            "fee config enabled": 12,
+            "low amount of lp providers": 8,
+            "mutable metadata": 4
+        }
+
+        risks = rugcheck.get("risks")
+
+        if isinstance(risks, list):
+            for risk_item in risks:
+                if not isinstance(risk_item, dict):
+                    continue
+
+                name = str(
+                    risk_item.get("name") or ""
+                ).strip()
+
+                if not name:
+                    continue
+
+                normalized_name = name.lower()
+                weight = risk_weights.get(normalized_name)
+
+                if weight is None:
+                    level = str(
+                        risk_item.get("level") or ""
+                    ).lower()
+
+                    if level == "danger":
+                        weight = 20
+                    elif level == "warn":
+                        weight = 5
+                    else:
+                        weight = 3
+
+                result["risk"] += weight
+                result["reasons"].append(
+                    f"RugCheck: {name}"
+                )
 
     solana_fields = (
         "mintable",
@@ -1606,13 +2135,12 @@ def analyze_security(security):
         "non_transferable"
     )
 
-    is_solana = any(
-        field in security
-        for field in solana_fields
+    is_solana = (
+        any(field in security for field in solana_fields)
+        or isinstance(security.get("_rugcheck"), dict)
     )
 
     if is_solana:
-
         mintable = safe_int(
             (security.get("mintable") or {}).get("status")
         )
@@ -1663,12 +2191,7 @@ def analyze_security(security):
                 "Token is non-transferable"
             )
 
-    # ========================================================
-    # EVM SECURITY
-    # ========================================================
-
     else:
-
         is_open_source = safe_int(
             security.get("is_open_source")
         )
@@ -1706,7 +2229,6 @@ def analyze_security(security):
             result["reasons"].append(
                 f"High buy tax ({buy_tax:.2f}%)"
             )
-
         elif buy_tax > 5:
             result["risk"] += 8
             result["reasons"].append(
@@ -1718,7 +2240,6 @@ def analyze_security(security):
             result["reasons"].append(
                 f"High sell tax ({sell_tax:.2f}%)"
             )
-
         elif sell_tax > 5:
             result["risk"] += 10
             result["reasons"].append(
@@ -1731,13 +2252,11 @@ def analyze_security(security):
                 "Token not detected in DEX"
             )
 
-    result["risk"] = min(
-        result["risk"],
-        100
-    )
+    result["risk"] = min(result["risk"], 100)
 
     result["safe"] = (
-        result["risk"] == 0
+        result["available"]
+        and result["risk"] == 0
     )
 
     if result["safe"]:
@@ -1747,6 +2266,10 @@ def analyze_security(security):
 
     return result
 
+
+# ============================================================
+# ANALYSIS ENGINE
+# ============================================================
 
 # ============================================================
 # ANALYSIS ENGINE
@@ -2607,16 +3130,6 @@ def calculate_analysis(pair, security):
         (pair.get("priceChange") or {}).get("m5")
     )
 
-    txns = pair.get("txns") or {}
-
-    txns_5m = txns.get("m5") or {}
-
-    buys_5m = safe_int(txns_5m.get("buys"))
-
-    sells_5m = safe_int(txns_5m.get("sells"))
-
-    total_txns_5m = buys_5m + sells_5m
-
     price_change_1h = safe_float(
         (pair.get("priceChange") or {}).get("h1")
     )
@@ -2625,38 +3138,23 @@ def calculate_analysis(pair, security):
         (pair.get("priceChange") or {}).get("h24")
     )
 
+    market_cap = safe_float(
+        pair.get("marketCap") or pair.get("fdv")
+    )
+
     txns = pair.get("txns") or {}
 
     txns_5m = txns.get("m5") or {}
     txns_1h = txns.get("h1") or {}
 
-    buys_5m = safe_int(
-        txns_5m.get("buys")
-    )
+    buys_5m = safe_int(txns_5m.get("buys"))
+    sells_5m = safe_int(txns_5m.get("sells"))
 
-    sells_5m = safe_int(
-        txns_5m.get("sells")
-    )
+    buys_1h = safe_int(txns_1h.get("buys"))
+    sells_1h = safe_int(txns_1h.get("sells"))
 
-    buys_1h = safe_int(
-        txns_1h.get("buys")
-    )
-
-    sells_1h = safe_int(
-        txns_1h.get("sells")
-    )
-
-    age_hours = get_token_age_hours(
-        pair
-    )
-
-    total_5m = (
-        buys_5m + sells_5m
-    )
-
-    total_1h = (
-        buys_1h + sells_1h
-    )
+    total_5m = buys_5m + sells_5m
+    total_1h = buys_1h + sells_1h
 
     buy_ratio_5m = (
         buys_5m / total_5m
@@ -2670,376 +3168,280 @@ def calculate_analysis(pair, security):
         else 0
     )
 
-    whale = analyze_holders(
-        security
-    )
+    age_hours = get_token_age_hours(pair)
 
-    security_result = analyze_security(
-        security
-    )
-
-    # ========================================================
-    # RISK
-    # ========================================================
+    whale = analyze_holders(security)
+    security_result = analyze_security(security)
 
     risk = 0
-
     risk_reasons = []
 
     if liquidity < 5000:
-
         risk += 15
-
-        risk_reasons.append(
-            "Very low liquidity"
-        )
-
+        risk_reasons.append("Very low liquidity")
     elif liquidity < MIN_LIQUIDITY:
-
         risk += 8
-
-        risk_reasons.append(
-            "Low liquidity"
-        )
+        risk_reasons.append("Low liquidity")
 
     if volume < 1000:
-
         risk += 12
-
-        risk_reasons.append(
-            "Very low volume"
-        )
-
+        risk_reasons.append("Very low volume")
     elif volume < MIN_VOLUME:
-
         risk += 6
+        risk_reasons.append("Low volume")
 
-        risk_reasons.append(
-            "Low volume"
-        )
+    if volume_5m <= 0:
+        risk += 8
+        risk_reasons.append("No recent volume")
+    elif liquidity > 0:
+        volume_liquidity_ratio = volume_5m / liquidity
+
+        if volume_liquidity_ratio < 0.005:
+            risk += 6
+            risk_reasons.append("Weak recent volume")
 
     if price_change_5m <= -20:
-
         risk += 15
-
-        risk_reasons.append(
-            "Heavy 5m dump"
-        )
-
+        risk_reasons.append("Heavy 5m dump")
     elif price_change_5m <= -10:
-
         risk += 8
+        risk_reasons.append("Short-term weakness")
 
-        risk_reasons.append(
-            "Short-term weakness"
-        )
-
-    if price_change_1h >= 200:
-
-        risk += 12
-
-        risk_reasons.append(
-            "Extreme 1h pump"
-        )
-
+    if price_change_1h >= 300:
+        risk += 20
+        risk_reasons.append("Extreme 1h overextension")
+    elif price_change_1h >= 200:
+        risk += 15
+        risk_reasons.append("Severe 1h overextension")
     elif price_change_1h >= 100:
+        risk += 9
+        risk_reasons.append("Strong 1h overextension")
 
-        risk += 7
-
-        risk_reasons.append(
-            "Strong 1h pump"
-        )
-
-    if (
-        total_5m > 0
-        and buy_ratio_5m < 0.40
-    ):
-
+    if price_change_24h >= 1000:
+        risk += 20
+        risk_reasons.append("Extreme 24h run-up")
+    elif price_change_24h >= 500:
+        risk += 15
+        risk_reasons.append("Severe 24h run-up")
+    elif price_change_24h >= 250:
         risk += 10
-
-        risk_reasons.append(
-            "Sell pressure"
-        )
-
-    if (
-        age_hours > 0
-        and age_hours < 1
-    ):
-
+        risk_reasons.append("Large 24h run-up")
+    elif price_change_24h >= 100:
         risk += 5
+        risk_reasons.append("Elevated 24h run-up")
 
-        risk_reasons.append(
-            "Extremely new token"
-        )
+    if total_5m >= 20 and buy_ratio_5m < 0.40:
+        risk += 10
+        risk_reasons.append("Sell pressure")
+    elif total_5m < 20 and buy_ratio_5m >= 0.70:
+        risk += 3
+        risk_reasons.append("Small buy-side sample")
 
-    elif (
-        age_hours > 0
-        and age_hours < 6
-    ):
-
+    if age_hours > 0 and age_hours < 1:
+        risk += 5
+        risk_reasons.append("Extremely new token")
+    elif age_hours > 0 and age_hours < 6:
         risk += 2
-
-        risk_reasons.append(
-            "Very new token"
-        )
-
-    # --------------------------------------------------------
-    # WHALE
-    # --------------------------------------------------------
+        risk_reasons.append("Very new token")
 
     risk += whale["risk"]
 
     for reason in whale["reasons"]:
-
         if "acceptable" not in reason.lower():
-
-            risk_reasons.append(
-                f"Whale: {reason}"
-            )
-
-    # --------------------------------------------------------
-    # SECURITY
-    # --------------------------------------------------------
+            risk_reasons.append(f"Whale: {reason}")
 
     if security_result["available"]:
-
         risk += security_result["risk"]
 
         for reason in security_result["reasons"]:
-
             if "passed" not in reason.lower():
-
-                risk_reasons.append(
-                    f"Security: {reason}"
-                )
-
+                risk_reasons.append(f"Security: {reason}")
     else:
-
         risk += 15
+        risk_reasons.append("Security data unavailable")
 
-        risk_reasons.append(
-            "Security data unavailable"
-        )
-
-    risk = min(
-        risk,
-        100
-    )
-
-    # ========================================================
-    # OPPORTUNITY
-    # ========================================================
+    risk = min(risk, 100)
 
     opportunity = 0
-
     opportunity_reasons = []
 
     if liquidity >= 100_000:
-
         opportunity += 20
-
-        opportunity_reasons.append(
-            "Strong liquidity"
-        )
-
+        opportunity_reasons.append("Strong liquidity")
     elif liquidity >= 50_000:
-
         opportunity += 16
-
-        opportunity_reasons.append(
-            "Good liquidity"
-        )
-
+        opportunity_reasons.append("Good liquidity")
     elif liquidity >= MIN_LIQUIDITY:
-
         opportunity += 10
-
-        opportunity_reasons.append(
-            "Acceptable liquidity"
-        )
+        opportunity_reasons.append("Acceptable liquidity")
 
     if volume >= 1_000_000:
-
-        opportunity += 20
-
-        opportunity_reasons.append(
-            "Exceptional volume"
-        )
-
-    elif volume >= 100_000:
-
         opportunity += 16
-
-        opportunity_reasons.append(
-            "Strong volume"
-        )
-
+        opportunity_reasons.append("Exceptional volume")
+    elif volume >= 100_000:
+        opportunity += 14
+        opportunity_reasons.append("Strong volume")
     elif volume >= MIN_VOLUME:
+        opportunity += 9
+        opportunity_reasons.append("Healthy volume")
 
-        opportunity += 10
+    if liquidity > 0 and volume_5m > 0:
+        volume_liquidity_ratio = volume_5m / liquidity
 
-        opportunity_reasons.append(
-            "Healthy volume"
-        )
+        if volume_liquidity_ratio >= 1:
+            opportunity += 12
+            opportunity_reasons.append("Strong recent volume")
+        elif volume_liquidity_ratio >= 0.25:
+            opportunity += 8
+            opportunity_reasons.append("Good recent volume")
+        elif volume_liquidity_ratio >= 0.05:
+            opportunity += 4
+            opportunity_reasons.append("Moderate recent volume")
 
-    if 10 <= price_change_1h <= 100:
-
-        opportunity += 15
-
-        opportunity_reasons.append(
-            "Healthy 1h momentum"
-        )
-
-    elif 0 < price_change_1h < 10:
-
-        opportunity += 7
-
-        opportunity_reasons.append(
-            "Positive 1h momentum"
-        )
-
-    if price_change_5m > 0:
-
-        opportunity += 8
-
-        opportunity_reasons.append(
-            "Positive 5m momentum"
-        )
-
-    if buy_ratio_5m >= 0.60:
-
+    if 5 <= price_change_1h <= 50:
         opportunity += 12
+        opportunity_reasons.append("Healthy 1h momentum")
+    elif 0 < price_change_1h < 5:
+        opportunity += 6
+        opportunity_reasons.append("Positive 1h momentum")
 
-        opportunity_reasons.append(
-            "Strong buy pressure"
-        )
-
-    elif buy_ratio_5m >= 0.52:
-
+    if 0 < price_change_5m <= 10:
         opportunity += 7
-
-        opportunity_reasons.append(
-            "Buy pressure positive"
-        )
+        opportunity_reasons.append("Controlled 5m momentum")
+    elif price_change_5m > 10:
+        opportunity += 3
+        opportunity_reasons.append("Fast 5m momentum")
 
     if total_5m >= 100:
-
         opportunity += 8
-
-        opportunity_reasons.append(
-            "High recent activity"
-        )
-
+        opportunity_reasons.append("High recent activity")
     elif total_5m >= 30:
-
         opportunity += 5
-
-        opportunity_reasons.append(
-            "Good recent activity"
-        )
+        opportunity_reasons.append("Good recent activity")
+    elif total_5m >= 10:
+        opportunity += 2
+        opportunity_reasons.append("Usable recent activity")
 
     if 1 <= age_hours <= 48:
-
         opportunity += 8
-
-        opportunity_reasons.append(
-            "Early-stage opportunity"
-        )
+        opportunity_reasons.append("Early-stage opportunity")
 
     if security_result["safe"]:
-
         opportunity += 6
-
-        opportunity_reasons.append(
-            "Security checks passed"
-        )
+        opportunity_reasons.append("Security checks passed")
 
     if whale["available"]:
-
         if whale["top_holder_percent"] < 15:
-
             opportunity += 5
-
-            opportunity_reasons.append(
-                "Healthy top-holder distribution"
-            )
+            opportunity_reasons.append("Healthy top-holder distribution")
 
         if whale["top10_percent"] < 50:
-
             opportunity += 4
+            opportunity_reasons.append("Healthy top-10 distribution")
 
-            opportunity_reasons.append(
-                "Healthy top-10 distribution"
-            )
+    opportunity = min(opportunity, 100)
 
-    opportunity = min(
-        opportunity,
-        100
-    )
+    entry_quality = 100
+    entry_reasons = []
 
-    # ========================================================
-    # CONFIDENCE
-    # ========================================================
+    if price_change_1h >= 300:
+        entry_quality -= 35
+        entry_reasons.append("Extreme 1h extension")
+    elif price_change_1h >= 200:
+        entry_quality -= 25
+        entry_reasons.append("Severe 1h extension")
+    elif price_change_1h >= 100:
+        entry_quality -= 15
+        entry_reasons.append("Strong 1h extension")
+    elif price_change_1h >= 50:
+        entry_quality -= 8
+        entry_reasons.append("Elevated 1h extension")
+
+    if price_change_24h >= 1000:
+        entry_quality -= 30
+        entry_reasons.append("Extreme 24h run-up")
+    elif price_change_24h >= 500:
+        entry_quality -= 22
+        entry_reasons.append("Severe 24h run-up")
+    elif price_change_24h >= 250:
+        entry_quality -= 14
+        entry_reasons.append("Large 24h run-up")
+    elif price_change_24h >= 100:
+        entry_quality -= 7
+        entry_reasons.append("Elevated 24h run-up")
+
+    if price_change_5m > 20:
+        entry_quality -= 8
+        entry_reasons.append("Fast short-term expansion")
+
+    if liquidity > 0:
+        volume_liquidity_ratio = volume_5m / liquidity
+
+        if volume_liquidity_ratio < 0.01:
+            entry_quality -= 12
+            entry_reasons.append("Weak immediate liquidity flow")
+        elif volume_liquidity_ratio < 0.05:
+            entry_quality -= 5
+            entry_reasons.append("Moderate immediate liquidity flow")
+
+    if total_5m < 10:
+        entry_quality -= 12
+        entry_reasons.append("Small transaction sample")
+    elif total_5m < 20:
+        entry_quality -= 6
+        entry_reasons.append("Limited transaction sample")
+
+    if (
+        total_5m >= 20
+        and 0.55 <= buy_ratio_5m <= 0.70
+        and price_change_5m > 0
+        and price_change_1h < 100
+    ):
+        entry_quality += 6
+        entry_reasons.append("Balanced positive momentum")
+
+    if (
+        price_change_5m < 0
+        and price_change_1h > 0
+        and price_change_1h < 100
+    ):
+        entry_quality += 5
+        entry_reasons.append("Controlled pullback")
+
+    entry_quality = max(0, min(entry_quality, 100))
 
     confidence = 100
-
     confidence_reasons = []
 
     if liquidity <= 0:
-
         confidence -= 20
-
-        confidence_reasons.append(
-            "Liquidity data missing"
-        )
+        confidence_reasons.append("Liquidity data missing")
 
     if volume <= 0:
-
         confidence -= 15
-
-        confidence_reasons.append(
-            "Volume data missing"
-        )
+        confidence_reasons.append("Volume data missing")
 
     if total_5m < 10:
-
         confidence -= 10
+        confidence_reasons.append("Low transaction sample")
 
-        confidence_reasons.append(
-            "Low transaction sample"
-        )
+    if total_5m < 20:
+        confidence -= 5
+        confidence_reasons.append("Limited transaction sample")
 
     if not security_result["available"]:
-
         confidence -= 20
-
-        confidence_reasons.append(
-            "Security data unavailable"
-        )
+        confidence_reasons.append("Security data unavailable")
 
     if not whale["available"]:
-
         confidence -= 15
-
-        confidence_reasons.append(
-            "Holder data unavailable"
-        )
+        confidence_reasons.append("Holder data unavailable")
 
     if age_hours <= 0:
-
         confidence -= 10
+        confidence_reasons.append("Token age unknown")
 
-        confidence_reasons.append(
-            "Token age unknown"
-        )
-
-    confidence = max(
-        0,
-        min(
-            confidence,
-            100
-        )
-    )
+    confidence = max(0, min(confidence, 100))
 
     grow_score = calculate_grow_score(
         liquidity,
@@ -3091,61 +3493,30 @@ def calculate_analysis(pair, security):
         liquidity
     )
 
-    # ========================================================
-    # CRITICAL BUY GATE
-    # ========================================================
-
     critical_ok = (
-
         liquidity >= MIN_LIQUIDITY
-
         and volume >= MIN_VOLUME
-
         and security_result["available"]
-
         and security_result["safe"]
-
         and whale["available"]
-
         and whale["risk"] < 20
-
     )
-
-    # ========================================================
-    # FINAL SIGNAL
-    # ========================================================
 
     buy = (
-
         risk <= MAX_BUY_RISK
-
         and opportunity >= MIN_BUY_OPPORTUNITY
-
         and confidence >= MIN_BUY_CONFIDENCE
-
+        and entry_quality >= 60
         and critical_ok
-
     )
 
-    signal = (
-        "BUY"
-        if buy
-        else
-        "RISK"
-    )
-
-    # ========================================================
-    # KRYPT SCORE
-    # ========================================================
+    signal = "BUY" if buy else "RISK"
 
     krypt_score = (
-
-        opportunity * 0.55
-
-        + (100 - min(risk, 100)) * 0.30
-
+        opportunity * 0.35
+        + entry_quality * 0.30
+        + (100 - min(risk, 100)) * 0.20
         + confidence * 0.15
-
     )
 
     if grow_forecast:
@@ -3172,9 +3543,7 @@ def calculate_analysis(pair, security):
                     else None
                 ),
                 "price": safe_float(pair.get("priceUsd")),
-                "market_cap": safe_float(
-                    pair.get("marketCap") or pair.get("fdv")
-                ),
+                "market_cap": market_cap,
                 "liquidity": liquidity,
                 "volume": volume,
                 "volume_5m": volume_5m,
@@ -3186,7 +3555,14 @@ def calculate_analysis(pair, security):
                 "total_5m": total_5m,
                 "total_1h": total_1h,
                 "age_hours": age_hours,
-
+                "entry_quality": entry_quality,
+                "entry_reasons": entry_reasons,
+                "risk": min(risk, 100),
+                "opportunity": opportunity,
+                "confidence": confidence,
+                "krypt_score": round(krypt_score, 1),
+                "signal": signal,
+                "critical_ok": critical_ok,
                 "grow_score": grow_score,
                 "direction_signal": direction_signal,
                 "direction_engine": "V4",
@@ -3197,77 +3573,39 @@ def calculate_analysis(pair, security):
             pass
 
     return {
-
         "risk": min(risk, 100),
-
         "opportunity": opportunity,
-
         "confidence": confidence,
-
-        "krypt_score": round(
-            krypt_score,
-            1
-        ),
-
+        "entry_quality": entry_quality,
+        "entry_reasons": entry_reasons,
+        "market_cap": market_cap,
+        "krypt_score": round(krypt_score, 1),
         "grow_score": grow_score,
         "grow_forecast": grow_forecast,
         "direction_signal": direction_signal,
         "signal": signal,
-
         "whale_risk": whale["risk"],
-
-        "security_safe": security_result["safe"],
-
         "liquidity": liquidity,
-
         "volume": volume,
-                "volume_5m": volume_5m,
-
         "volume_5m": volume_5m,
-
         "price_change_5m": price_change_5m,
-
         "price_change_1h": price_change_1h,
-
         "price_change_24h": price_change_24h,
-
         "buys_5m": buys_5m,
-
         "sells_5m": sells_5m,
-
         "buys_1h": buys_1h,
-
         "sells_1h": sells_1h,
-
         "buy_ratio_5m": buy_ratio_5m,
-
         "buy_ratio_1h": buy_ratio_1h,
-
         "age_hours": age_hours,
-
-        "security_available":
-            security_result["available"],
-
-        "security_safe":
-            security_result["safe"],
-
-        "security":
-            security_result,
-
-        "whale":
-            whale,
-
-        "risk_reasons":
-            risk_reasons,
-
-        "opportunity_reasons":
-            opportunity_reasons,
-
-        "confidence_reasons":
-            confidence_reasons
-
+        "security_available": security_result["available"],
+        "security_safe": security_result["safe"],
+        "security": security_result,
+        "whale": whale,
+        "risk_reasons": risk_reasons,
+        "opportunity_reasons": opportunity_reasons,
+        "confidence_reasons": confidence_reasons
     }
-
 
 # ============================================================
 # SCANNER
@@ -3312,10 +3650,24 @@ def scan_memory_tokens():
         address = saved.get("tokenAddress")
 
         if not chain or not address:
+            invalid_profile_count += 1
             continue
 
+        chain_key = str(chain).lower()
+
+        if chain_key not in chain_stats:
+            chain_stats[chain_key] = {
+                "total": 0,
+                "pairs": 0,
+                "missing": 0
+            }
+
+        chain_stats[chain_key]["total"] += 1
+
+        lookup_chain = "ethereum" if chain_key == "eth" else chain
+
         pairs = get_token_pairs(
-            chain,
+            lookup_chain,
             address
         )
 
@@ -3324,7 +3676,11 @@ def scan_memory_tokens():
         )
 
         if not pair:
+            chain_stats[chain_key]["missing"] += 1
+            pair_missing_count += 1
             continue
+
+        chain_stats[chain_key]["pairs"] += 1
 
         print(
             f"{GRAY}[{index:02d}/{len(memory)}] "
@@ -3410,6 +3766,19 @@ def scan_memory_tokens():
             x["analysis"]["krypt_score"]
         ),
         reverse=True
+    )
+
+    print(
+        f"{GRAY}[RADAR] Pair missing      : {pair_missing_count}{RESET}"
+    )
+    print(
+        f"{GRAY}[RADAR] Age filtered      : {age_filtered_count}{RESET}"
+    )
+    print(
+        f"{GRAY}[RADAR] Invalid profiles  : {invalid_profile_count}{RESET}"
+    )
+    print(
+        f"{GRAY}[RADAR] Actually analyzed : {analyzed_count}{RESET}"
     )
 
     return results
@@ -3670,16 +4039,10 @@ def scan_new_tokens():
                     group[round_index]
                 )
 
-                if len(balanced_profiles) >= 100:
-                    break
-
-        if len(balanced_profiles) >= 100:
-            break
-
     profiles = balanced_profiles
 
     print(
-        f"{GRAY}[RADAR] Profiles received: "
+        f"{GRAY}[RADAR] Discovery candidates: "
         f"{len(profiles)}{RESET}"
     )
 
@@ -3705,10 +4068,16 @@ def scan_new_tokens():
 
     line()
 
-    for index, profile in enumerate(
-        profiles,
-        1
-    ):
+    analyzed_count = 0
+    pair_missing_count = 0
+    age_filtered_count = 0
+    invalid_profile_count = 0
+    chain_stats = {}
+
+    for profile in profiles:
+
+        if analyzed_count >= 100:
+            break
 
         chain = profile.get(
             "chainId"
@@ -3719,6 +4088,7 @@ def scan_new_tokens():
         )
 
         if not chain or not address:
+            invalid_profile_count += 1
             continue
 
         pairs = get_token_pairs(
@@ -3731,6 +4101,7 @@ def scan_new_tokens():
         )
 
         if not pair:
+            pair_missing_count += 1
             continue
 
         discovery_quality = calculate_discovery_quality(
@@ -3764,14 +4135,17 @@ def scan_new_tokens():
                 )
 
                 if age_hours > 720:
+                    age_filtered_count += 1
                     continue
 
         except Exception:
             pass
 
+        analyzed_count += 1
+
         print(
             f"{GRAY}"
-            f"[{index:02d}/{len(profiles)}] "
+            f"[{analyzed_count:02d}/100] "
             f"Security + Whale scan... "
             f"Discovery: {discovery_quality}/100"
             f"{RESET}"
@@ -3839,6 +4213,10 @@ def scan_new_tokens():
             "analysis": analysis
 
         })
+
+        publish_krypt_signal(
+            results[-1]
+        )
 
         signal_color = (
 
@@ -3971,6 +4349,28 @@ def scan_new_tokens():
     print()
 
     save_radar_memory(results)
+
+    print(
+        f"{GRAY}[RADAR] Pair missing      : {pair_missing_count}{RESET}"
+    )
+    print(
+        f"{GRAY}[RADAR] Age filtered      : {age_filtered_count}{RESET}"
+    )
+    print(
+        f"{GRAY}[RADAR] Invalid profiles  : {invalid_profile_count}{RESET}"
+    )
+    print(
+        f"{GRAY}[RADAR] Actually analyzed : {analyzed_count}{RESET}"
+    )
+
+    for chain_key, stats in chain_stats.items():
+        print(
+            f"{GRAY}[RADAR] {chain_key:<12} "
+            f"TOTAL={stats['total']:<3} "
+            f"PAIRS={stats['pairs']:<3} "
+            f"MISSING={stats['missing']:<3}"
+            f"{RESET}"
+        )
 
     return results
 
@@ -5885,6 +6285,80 @@ def dashboard():
 # START
 # ============================================================
 
+def krypt_signal_evaluator_worker():
+    while True:
+        try:
+            if os.path.exists(
+                SIGNAL_HISTORY_FILE
+            ):
+                with SIGNAL_HISTORY_LOCK:
+                    with open(
+                        SIGNAL_HISTORY_FILE,
+                        "r",
+                        encoding="utf-8"
+                    ) as f:
+                        history = json.load(f)
+
+                if isinstance(history, list):
+                    changed = False
+
+                    for index, record in enumerate(history):
+
+                        if not isinstance(record, dict):
+                            continue
+
+                        if record.get(
+                            "validation_status"
+                        ) in (
+                            "COMPLETE",
+                            "INVALID_HISTORICAL",
+                            "INCOMPLETE"
+                        ):
+                            continue
+
+                        before = dict(record)
+
+                        history[index] = (
+                            evaluate_krypt_signal_record(
+                                record
+                            )
+                        )
+
+                        if history[index] != before:
+                            changed = True
+
+                    if changed:
+                        with SIGNAL_HISTORY_LOCK:
+                            tmp = (
+                                SIGNAL_HISTORY_FILE
+                                + ".tmp"
+                            )
+
+                            with open(
+                                tmp,
+                                "w",
+                                encoding="utf-8"
+                            ) as f:
+                                json.dump(
+                                    history,
+                                    f,
+                                    ensure_ascii=False,
+                                    indent=2
+                                )
+                                f.flush()
+                                os.fsync(f.fileno())
+
+                            os.replace(
+                                tmp,
+                                SIGNAL_HISTORY_FILE
+                            )
+
+        except Exception:
+            pass
+
+        time.sleep(60)
+
+
 def forecast_evaluator_worker():
     """
     Background V4 forecast evaluator.
@@ -5909,12 +6383,13 @@ def forecast_evaluator_worker():
                 FORECAST_MEMORY_FILE
             ):
 
-                with open(
-                    FORECAST_MEMORY_FILE,
-                    "r",
-                    encoding="utf-8"
-                ) as f:
-                    memory = json.load(f)
+                with FORECAST_MEMORY_LOCK:
+                    with open(
+                        FORECAST_MEMORY_FILE,
+                        "r",
+                        encoding="utf-8"
+                    ) as f:
+                        memory = json.load(f)
 
                 if isinstance(memory, list):
 
@@ -5950,17 +6425,8 @@ def forecast_evaluator_worker():
                                 changed = True
 
                     if changed:
-
-                        with open(
-                            FORECAST_MEMORY_FILE,
-                            "w",
-                            encoding="utf-8"
-                        ) as f:
-                            json.dump(
-                                memory,
-                                f,
-                                indent=2
-                            )
+                        with FORECAST_MEMORY_LOCK:
+                            write_forecast_memory(memory)
 
         except Exception:
             pass
@@ -5980,6 +6446,13 @@ def main():
         )
 
         evaluator_thread.start()
+
+        signal_evaluator_thread = threading.Thread(
+            target=krypt_signal_evaluator_worker,
+            daemon=True
+        )
+
+        signal_evaluator_thread.start()
 
     except Exception:
         pass
