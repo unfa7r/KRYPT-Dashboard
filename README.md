@@ -32,6 +32,3 @@ Telegram'da:
 
 Sinyalleri almak için.
 
-/stop
-
-Sinyalleri durdurmak için.
