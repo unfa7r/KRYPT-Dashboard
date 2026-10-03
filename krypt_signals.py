@@ -126,6 +126,21 @@ def send_telegram(signal, user_id):
         return False
 
     message = make_signal(signal)
+
+    text = (
+        f"🚨 *KRYPT SIGNALS*\n\n"
+        f"🚀 *{message['symbol']}* ({message['name']})\n"
+        f"🔗 Chain: {message['chain'].upper()}\n"
+        f"📊 Score: {message['score']:.1f}\n"
+        f"💰 Market Cap: {money(message['market_cap'])}\n"
+        f"💵 Price: {message['price']}\n"
+        f"💧 Liquidity: {money(message['liquidity'])}\n"
+        f"📈 Vol 5m: {money(message['volume_5m'])}\n"
+        f"🟢 Buys 5m: {message['buys_5m']}\n"
+        f"🔴 Sells 5m: {message['sells_5m']}\n\n"
+        f"`{message['address']}`"
+    )
+
     url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
 
     try:
@@ -133,7 +148,7 @@ def send_telegram(signal, user_id):
             url,
             json={
                 "chat_id": user_id,
-                "text": message,
+                "text": text,
                 "parse_mode": "Markdown",
                 "disable_web_page_preview": True,
             },
@@ -150,7 +165,6 @@ def send_telegram(signal, user_id):
     except Exception as e:
         print(f"[KRYPT SIGNALS] Telegram exception: {e}")
         return False
-
 
 def run_scan(state, user_id):
     print()
