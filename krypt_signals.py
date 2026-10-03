@@ -125,7 +125,7 @@ def send_telegram(signal, user_id):
         print("[KRYPT SIGNALS] Telegram user ID missing.")
         return False
 
-    message = make_signal(signal)
+    message = signal
 
     text = (
         f"🚨 *KRYPT SIGNALS*\n\n"
